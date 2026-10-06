@@ -16,26 +16,27 @@ Repo-wide rules (verification order, idiomatic-traits, no `cargo install`, no em
 - [Module map](#module-map)
 - [Shipped vs planned](#shipped-vs-planned)
 - [Cite by symbol, not line number](#cite-by-symbol-not-line-number)
+- [Client behavior docs](#client-behavior-docs)
 
 ## What this crate is
 
 Laser SDK uses an append-only log for source records. Projections, queries, key-value state, and forks provide views over that data. AGDX defines the shared exchange contract.
 
-The workspace publishes `laser-wire`, the Rust `laser-sdk`, Python bindings, and a native TypeScript client. Rust defines the codes, envelopes, dictionaries, limits, and reference files. Python calls the Rust implementation. TypeScript uses the same encoded files and behavior scenarios. The SDKs do not call language models.
+The workspace publishes `laser-wire`, the Rust `laser-sdk`, Python bindings, and a native TypeScript client, all at version `0.6.0`. The three clients expose streaming, managed, and agent surfaces. The [cross-SDK parity matrix](../../../docs/parity.md) maps Rust types, fields, error payloads, constants, and callable APIs to their Python and TypeScript forms, and reports unresolved mappings and peer-only APIs. Update it in the same change as any public API. Rust defines the codes, envelopes, dictionaries, limits, and reference files. Python calls the Rust implementation. TypeScript uses the same encoded files and behavior scenarios. The SDKs do not call language models.
 
-`laser_sdk::prelude::*` imports common accessors and types, about 35 items. `laser_sdk::prelude::full::*` also imports bridge, projection, and memory types. Examples and integration tests use `full`. Application code can use the smaller prelude with explicit imports. `ReliableConsumer` is the public consumer, and `ReliableWorker` is its private message adapter.
+`laser_sdk::prelude::*` imports the common accessors and types. `laser_sdk::prelude::full::*` also imports bridge, projection, and memory types. Examples and integration tests use `full`. Application code can use the smaller prelude with explicit imports. `ReliableConsumer` is the public consumer, and `ReliableWorker` is its private message adapter.
 
 `Laser::connect(connection_string)` opens a connection. `laser.stream(name)` selects a stream with `ensure()` and `topic(name)` methods. `laser.stream(name).topic(name)` addresses a topic explicitly. `laser.topic(name)` uses the default selected by `connect_with_stream` or `with_default_stream`. Without a default, it returns `NoStream`.
 
-For `*.laserdata.cloud` and `*.laserdata.com`, Rust and Python enable TLS unless `tls_ca_file=` already supplies a certificate. `sdk/certs/laserdata.crt` supplies the bundled CA through `include_bytes!`. `resolve_tls` and `is_laserdata_host` in `sdk/src/laser.rs` implement selection. The cached certificate must match the bundled bytes and reside in an owner-only directory. `LASER_TLS_CERT=<path>` selects a CA for any host. `LASER_NO_TLS=1` disables automatic TLS, while `0` and `false` do not.
+For `*.laserdata.cloud` and `*.laserdata.com`, Rust, Python, and TypeScript enable TLS unless `tls_ca_file=` already supplies a certificate. `sdk/certs/laserdata.crt` supplies the bundled CA through `include_bytes!`. `resolve_tls` and `is_laserdata_host` in `sdk/src/laser.rs` implement selection. The cached certificate must match the bundled bytes and reside in an owner-only directory. `LASER_TLS_CERT=<path>` selects a CA for any host. `LASER_NO_TLS=1` disables automatic TLS, while `0` and `false` do not.
 
-Other hosts retain their connection-string configuration. `Laser::connect_env()` reads `LASER_CONNECTION_STRING` and optional `LASER_STREAM`, with a typed `Config` error for missing required input. `Laser::local()` targets `iggy:iggy@127.0.0.1:8090`.
+Other hosts retain their connection-string configuration. `Laser::connect_env()` reads `LASER_CONNECTION_STRING` and optional `LASER_STREAM`, with a typed `Config` error for missing required input. `Laser::local()` targets `iggy:iggy@127.0.0.1:8090`. Python and TypeScript provide the same two helpers (`connect_env`, `connectEnv`, `local`).
 
 The `streaming` feature provides `publish()`, `publish_batch()`, `send(payload, headers, key)`, and `batch(messages, key)`. Typed and one-shot sends accept `impl Into<Vec<u8>>`. Continuous streaming uses `producer()`, `consumer(name, partition)`, and `consumer_group(group).consumer()`. `ProducerMessage` and `ConsumerMessage` retain `bytes::Bytes` for shared payload storage. These APIs support batching, delays, retries, discovery, routing, replay, groups, and commits.
 
 `commit(&message)` stores an offset explicitly, and `next_within(timeout)` bounds a single-record wait. `replay()` creates a client-offset cursor, and `ensure(partitions)` creates the topic when absent. In `sdk/src/typed.rs`, `.json::<T>()` and `.cbor::<T>()` select codecs. `.schema::<T>(id)` compiles a registered schema, rejects invalid values, and adds `agdx.ct` and `agdx.sid`. `records(reader_name)` reports `TypedDecodeError { position, source }` and continues past an invalid record.
 
-Use `iggy_producer()`, `iggy_consumer()`, `iggy_consumer_group()`, `Laser::client()`, and `laser_sdk::iggy` for direct Iggy access. Examples include `native-streaming`, `event-analytics`, and `order-book`. Default features are `streaming` and `provenance`. Agent and managed features are optional.
+Use `iggy_producer()`, `iggy_consumer()`, `iggy_consumer_group()`, `Laser::client()`, and `laser_sdk::iggy` for direct Iggy access. Examples include `native-streaming`, `event-analytics`, and `fleet-tape`. Default features are `streaming` and `provenance`. Agent and managed features are optional.
 
 Every client uses standard Iggy transport. Managed reads use the non-replicated extension, and the three authorization writes use dedicated replicated operations. Managed calls return `LaserError::Unsupported` without a supporting backend. `BlobStore::put`, `BlobStore::get`, and one-shot managed calls use `Vec<u8>`. Conversion to Iggy `Bytes` occurs at the client-call boundary. `sdk/src/blob.rs` and `send_raw_with_response` define those paths.
 
@@ -84,14 +85,8 @@ The one canonical inventory lives in [AGENTS.md](../../../AGENTS.md#what-is-ship
 
 ## Cite by symbol, not line number
 
-Refer to `Laser::send_agent`, `ReliableConsumer::consume`, `keys::CONVERSATION_ID`, not line numbers. Lines drift, symbols do not.
+Refer to `Laser::send_agent`, `ReliableConsumer::run`, `keys::CONVERSATION_ID`, not line numbers. Lines drift, symbols do not.
 
-## Publish recovery
+## Client behavior docs
 
-Direct producers inherit the connection retry configuration. Python `retries=None` and `retry_interval_ms=None` preserve those defaults. Set `retries=0` to disable resends. Producer initialization also uses the publish timeout and retry budget.
-
-Publish attempts default to 60 seconds with three retries. Retry delays start at 250 ms, double after each failure, and stop increasing at 30 seconds.
-
-Connect budgets use Rust `connect_timeout`, Python `connect_timeout_ms`, and TypeScript `connectTimeout`, overriding `LASER_CONNECT_TIMEOUT_MS` (default 30000, see [connect timeout and cleanup](../../../docs/connect-timeout.md)). Rust builder methods are `publish_timeout`, `publish_max_retries`, and `publish_retry_backoff`. Python `Laser.connect` keywords are `publish_timeout_ms`, `publish_max_retries`, and `publish_retry_backoff_ms`. TypeScript builder methods are `publishTimeout`, `publishMaxRetries`, and `publishRetryBackoff`. Explicit configuration overrides `LASER_PUBLISH_TIMEOUT_MS`, `LASER_PUBLISH_MAX_RETRIES`, and `LASER_PUBLISH_RETRY_BACKOFF_MS`.
-
-Exhausted retries return an error for the application to handle. They do not exit the process. Preserve message identity and confirmed chunks across retries. See [publish recovery](../../../docs/publish-recovery.md).
+Connect and publish defaults, failure reports, and the 0.6.0 upgrade steps each have one owning page: [connect timeout and cleanup](../../../docs/connect-timeout.md), [publish recovery](../../../docs/publish-recovery.md), [producer statistics](../../../docs/producer-statistics.md), and [client behavior](../../../docs/client-behavior.md). Link to them instead of restating defaults here or in another skill.

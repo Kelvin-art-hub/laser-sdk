@@ -15,7 +15,7 @@ impl PyLaser {
     fn fork(&self, fork_id: String) -> PyForkHandle {
         PyForkHandle {
             laser: self.inner.clone(),
-            fork_id,
+            id: fork_id,
         }
     }
 
@@ -34,31 +34,42 @@ impl PyLaser {
 #[pyclass(name = "ForkHandle", frozen)]
 pub struct PyForkHandle {
     laser: Laser,
+    /// The fork id this handle addresses.
     #[pyo3(get)]
-    fork_id: String,
+    id: String,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyForkHandle {
     /// Open this fork. `severed=True` freezes a snapshot at the trunk's current
-    /// offsets. The default (continuous) keeps seeing new trunk appends. Narrow a
-    /// severed snapshot with `tables`. Returns the fork's metadata dict.
-    #[pyo3(signature = (*, severed=false, parent=None, tables=None))]
+    /// offsets. The default, `continuous=True` when stated explicitly, keeps
+    /// seeing new trunk appends. Narrow a severed snapshot with `tables`.
+    /// Returns the fork's metadata dict.
+    #[pyo3(signature = (*, severed=false, continuous=false, parent=None, tables=None))]
     fn create<'py>(
         &self,
         py: Python<'py>,
         severed: bool,
+        continuous: bool,
         parent: Option<String>,
         tables: Option<Vec<String>>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        if severed && continuous {
+            return Err(crate::errors::InvalidError::new_err(
+                "a fork is either severed or continuous, not both",
+            ));
+        }
         let laser = self.laser.clone();
-        let fork_id = self.fork_id.clone();
+        let fork_id = self.id.clone();
         future_into_py(py, async move {
             let handle = laser.fork(fork_id);
             let mut request = handle.create();
             if severed {
                 request = request.severed();
+            }
+            if continuous {
+                request = request.continuous();
             }
             if let Some(parent) = parent {
                 request = request.parent(parent);
@@ -74,7 +85,7 @@ impl PyForkHandle {
     /// Promote this fork onto the trunk, then squash it. Returns rows applied.
     fn promote<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let laser = self.laser.clone();
-        let fork_id = self.fork_id.clone();
+        let fork_id = self.id.clone();
         future_into_py(py, async move {
             laser.fork(fork_id).promote().await.map_err(to_pyerr)
         })
@@ -83,7 +94,7 @@ impl PyForkHandle {
     /// Squash this fork (discard speculative rows). Returns whether one existed.
     fn squash<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let laser = self.laser.clone();
-        let fork_id = self.fork_id.clone();
+        let fork_id = self.id.clone();
         future_into_py(py, async move {
             laser.fork(fork_id).squash().await.map_err(to_pyerr)
         })
@@ -93,7 +104,7 @@ impl PyForkHandle {
     fn put_row(&self, table: String, partition_id: u32, offset: u64) -> PyForkPut {
         PyForkPut {
             laser: self.laser.clone(),
-            fork_id: self.fork_id.clone(),
+            fork_id: self.id.clone(),
             table,
             partition_id,
             offset,
@@ -160,9 +171,9 @@ impl PyForkPut {
     /// Attach an opaque payload body (str, bytes, or bytearray).
     fn payload<'py>(
         mut slf: PyRefMut<'py, Self>,
-        value: &Bound<'_, PyAny>,
+        payload: &Bound<'_, PyAny>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        slf.payload = Some(payload_bytes(value)?);
+        slf.payload = Some(payload_bytes(payload)?);
         Ok(slf)
     }
 
@@ -207,10 +218,7 @@ impl PyForkPut {
                 request = request.payload(payload);
             }
             if let Some(embedding) = embedding {
-                // The fork put takes the embedding as a JSON array literal.
-                let literal = serde_json::to_string(&embedding)
-                    .map_err(|e| crate::errors::CodecError::new_err(e.to_string()))?;
-                request = request.embedding(literal);
+                request = request.embedding(embedding);
             }
             if tombstone {
                 request = request.tombstone();

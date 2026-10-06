@@ -12,6 +12,7 @@ Load the SDK overview first. The public hierarchy is `Laser → stream → topic
 - `sdk/src/stream/consumer_group.rs` owns group handles, optional setup policies, creation outcomes and group-scoped administration.
 - `sdk/src/stream/transport.rs` owns normal streaming, group-aware delivery, commit policies, cancellation and shutdown.
 - `sdk/src/filters/` holds internal catalog clients, routing, membership, advanced readers, bounded outstanding pages, progress and optional local guards.
+- `sdk/src/filters/mod.rs` re-exports the policy and evaluator types. The saved-filter catalog frames (`FilterRef`, `FilterMutation`, `FilterPage`, `FilterSummary`, `FilteredPage`, `RecordFault`, and the rest) and `ExactDecimal` are reachable only as `laser_sdk::wire::filter`, and TypeScript keeps them under `wire` in `@laserdata/laser-sdk/full`. `FilterAnnounce` lives in `laser_sdk::capabilities`.
 - `wire/src/filter/` defines policies, codecs, requests, replies, revisions and durable operation results. `read.rs` includes automatic group execution, scan ceilings, source history and policy generations.
 - `foreign/python/src/consumer_group.rs`, `filters.rs` and `transport.rs` bind the same behavior through Rust. Regenerate the Python stubs.
 - `foreign/typescript/src/stream/consumer-group.ts`, `consumer.ts`, `managed/filters.ts` and the wire modules implement the native TypeScript peer. Regenerate both API reports.
@@ -26,7 +27,7 @@ Acknowledge only completed contiguous work under the delivered group/source iden
 
 A reused name or offset is not proof of the same history. Catalog freshness uses primary history verification and durable configuration receipts. Group bindings remain immutable per used incarnation. New draft revisions do not activate themselves. Use separate groups for A/B policies.
 
-Rust defines behavior. Python and TypeScript must implement equivalent limits, errors, setup outcomes, commit timing and lifecycle. Public changes update exports, stubs, API reports and tests together. Keep operation versions at 1.
+Rust defines behavior. Python and TypeScript must implement equivalent limits, errors, setup outcomes, commit timing and lifecycle. Public changes update exports, stubs, API reports and tests together, then regenerate `docs/parity.md` with `python3 scripts/check-parity.py --write` and run `just parity-check`. Keep operation versions at 1.
 
 ## Validation and documentation
 

@@ -9,53 +9,25 @@ import type { SendMessagesResponse } from 'apache-iggy';
 import { SimpleClient } from 'apache-iggy';
 
 // @public (undocumented)
-export const A2A_APP_ERROR_CODE = -32000;
-
-// @public (undocumented)
 export const A2A_JSONRPC_BINDING = "JSONRPC";
 
 // @public (undocumented)
 export const A2A_PROTOCOL_VERSION = "1.0";
 
 // @public (undocumented)
-export interface A2aAgentCard {
-    // (undocumented)
-    readonly capabilities: AgentCardCapabilities;
-    // (undocumented)
-    readonly defaultInputModes: readonly string[];
-    // (undocumented)
-    readonly defaultOutputModes: readonly string[];
-    // (undocumented)
-    readonly description: string;
-    // (undocumented)
-    readonly name: string;
-    // (undocumented)
-    readonly signatures?: readonly AgentCardSignature[];
-    // (undocumented)
-    readonly skills: readonly AgentSkill[];
-    // (undocumented)
-    readonly supportedInterfaces: readonly AgentInterface[];
-    // (undocumented)
-    readonly version: string;
-}
-
-// @public (undocumented)
 export class A2aBridge {
     constructor(laser: Laser, source: AgentId, requestTopic: string, replyTopic: string);
     // (undocumented)
-    cancel(id: string): Promise<A2aTask>;
+    cancel(id: string): Promise<Task>;
     // (undocumented)
-    card(): A2aAgentCard;
+    card(): AgentCard;
     // (undocumented)
     handleRpc(input: unknown): Promise<JsonRpcResponse>;
     // (undocumented)
-    signedCard(key: SigningKey): A2aAgentCard;
+    signedCard(key: SigningKey): AgentCard;
+    submit(paramsJson: unknown): Promise<Task>;
     // (undocumented)
-    submit(params: unknown): Promise<A2aTask>;
-    // (undocumented)
-    submitJson(paramsJson: Uint8Array): Promise<A2aTask>;
-    // (undocumented)
-    task(id: string): Promise<A2aTask>;
+    task(id: string): Promise<Task>;
     // (undocumented)
     withBridgeHops(previous: readonly string[]): this;
     // (undocumented)
@@ -76,20 +48,6 @@ export const A2aMethod: {
 export type A2aMethod = (typeof A2aMethod)[keyof typeof A2aMethod];
 
 // @public (undocumented)
-export interface A2aTask {
-    // (undocumented)
-    readonly artifacts: readonly {
-        readonly text: string;
-    }[];
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly status: {
-        readonly state: TaskState;
-    };
-}
-
-// @public (undocumented)
 interface AcceptedOperationView {
     // (undocumented)
     readonly completedAtMicros?: bigint;
@@ -107,14 +65,8 @@ interface AcceptedOperationView {
     readonly submittedAtMicros: bigint;
 }
 
-// Warning: (ae-forgotten-export) The symbol "FenceEntry" needs to be exported by the entry point full.d.ts
-// Warning: (ae-forgotten-export) The symbol "FenceSweepState" needs to be exported by the entry point full.d.ts
-//
 // @public (undocumented)
-export function acceptFence(highWater: Map<string, FenceEntry>, sweepState: FenceSweepState, taskKey: string, fence: bigint, nowMicros: bigint): boolean;
-
-// @public (undocumented)
-export interface AckReceipt {
+interface AckReceipt {
     // (undocumented)
     readonly generation: SourceGeneration;
     // (undocumented)
@@ -195,9 +147,6 @@ export const ActionKind: {
 export type ActionKind = (typeof ActionKind)[keyof typeof ActionKind];
 
 // @public (undocumented)
-export const ADVERTISED_INBOX_ROUTE: InboxRoute;
-
-// @public (undocumented)
 export interface Agdx {
     // Warning: (ae-forgotten-export) The symbol "BytesLike" needs to be exported by the entry point full.d.ts
     //
@@ -217,8 +166,6 @@ export interface Agdx {
     status(operation: string): AgdxSend;
     // (undocumented)
     stream(correlation: CorrelationId, purpose: string): AgdxStream;
-    // (undocumented)
-    readonly topicName: string;
 }
 
 // @public (undocumented)
@@ -459,12 +406,10 @@ const AGDX_SET_CLIENT_METADATA_CODE: number;
 const AGDX_WATCH_FILTER_CATALOG_CODE: number;
 
 // @public (undocumented)
-export type AgdxLogPosition = LogPosition;
-
-// @public (undocumented)
 export interface AgdxSend {
     // (undocumented)
     body(body: BytesLike): this;
+    claimCheck(store: BlobStore, thresholdBytes: number): this;
     // (undocumented)
     contentType(contentType: ContentType): this;
     // (undocumented)
@@ -517,10 +462,14 @@ export interface AgdxStream {
     write(body: BytesLike): Promise<void>;
 }
 
-// @public (undocumented)
-export const Agent: {
-    readonly builder: () => AgentBuilder;
-};
+// @public
+export class Agent {
+    // Warning: (ae-forgotten-export) The symbol "AgentDefinition" needs to be exported by the entry point full.d.ts
+    constructor(definition: AgentDefinition);
+    // (undocumented)
+    static builder(): AgentBuilder;
+    spawn(laser: Laser): AgentHandle;
+}
 
 // @public (undocumented)
 const AGENT_ID = "gen_ai.agent.id";
@@ -542,14 +491,13 @@ export class AgentActivity {
     decisions: bigint;
     // (undocumented)
     lastDecision: PolicyEvidence | undefined;
-    // (undocumented)
-    observe(evidence: PolicyEvidence): void;
 }
 
 // @public (undocumented)
 export class AgentBuilder {
     // (undocumented)
     ackOnPickup(value?: boolean): this;
+    build(): Agent;
     // (undocumented)
     capabilities(capabilities: readonly CapabilityDescriptor[]): this;
     // (undocumented)
@@ -557,19 +505,15 @@ export class AgentBuilder {
     // (undocumented)
     consolidateEvery(milliseconds: number): this;
     // (undocumented)
-    consolidator(consolidator: AgentConsolidator): this;
+    consolidator(consolidator: Consolidator): this;
     // (undocumented)
     consumerGroup(group: ConsumerGroupName): this;
-    // (undocumented)
-    deadLetterSink(sink: DeadLetterSink): this;
     // (undocumented)
     deduplicator(deduplicator: Deduplicator): this;
     // (undocumented)
     dedupWindow(size: number): this;
-    // Warning: (ae-forgotten-export) The symbol "GovernorRetention" needs to be exported by the entry point full.d.ts
-    //
-    // (undocumented)
-    governor(governor: ActionGovernor, mode: GovernorMode, retention?: Partial<GovernorRetention>): this;
+    governor(governor: readonly [ActionGovernor, GovernorMode]): this;
+    governorRetention(retention: Partial<GovernorRetention>): this;
     // (undocumented)
     handler(handler: AgentHandler): this;
     // (undocumented)
@@ -585,6 +529,8 @@ export class AgentBuilder {
     // (undocumented)
     middleware(middleware: AgentMiddleware): this;
     // (undocumented)
+    onDeadLetter(sink: DeadLetterSink): this;
+    // (undocumented)
     pollInterval(ms: number): this;
     // (undocumented)
     respondOn(topic: string): this;
@@ -594,8 +540,6 @@ export class AgentBuilder {
     shutdownGrace(ms: number): this;
     // (undocumented)
     signingKey(signingKey: SigningKey): this;
-    // (undocumented)
-    spawn(laser: Laser): AgentHandle;
     // (undocumented)
     understoodFeatures(bits: bigint): this;
     // (undocumented)
@@ -615,6 +559,28 @@ const AgentCancelCommand: ManagedCommand<AgentCancel, AgentReply>;
 
 // @public (undocumented)
 export interface AgentCard {
+    // (undocumented)
+    readonly capabilities: AgentCardCapabilities;
+    // (undocumented)
+    readonly defaultInputModes: readonly string[];
+    // (undocumented)
+    readonly defaultOutputModes: readonly string[];
+    // (undocumented)
+    readonly description: string;
+    // (undocumented)
+    readonly name: string;
+    // (undocumented)
+    readonly signatures?: readonly AgentCardSignature[];
+    // (undocumented)
+    readonly skills: readonly AgentSkill[];
+    // (undocumented)
+    readonly supportedInterfaces: readonly AgentInterface[];
+    // (undocumented)
+    readonly version: string;
+}
+
+// @public (undocumented)
+interface AgentCard_2 {
     // (undocumented)
     readonly capabilities: readonly CapabilityDescriptor[];
     // (undocumented)
@@ -646,24 +612,13 @@ export interface AgentCardSignature {
 }
 
 // @public (undocumented)
-export interface AgentConsolidator {
-    // (undocumented)
-    consolidate(scope: MemoryScope): Promise<unknown>;
-}
-
-// @public (undocumented)
-export class AgentContext {
-    constructor(laser: Laser, message: AgentMessage, options?: AgentContextOptions);
-    // (undocumented)
-    readonly agent: AgentId | undefined;
+export class AgentCtx {
     // (undocumented)
     approvalGate(replyTopic: string, prompt: BytesLike, timeoutMs: number, options?: {
         readonly signal?: AbortSignal;
     }): Promise<Uint8Array>;
     // (undocumented)
     fanOut(selector: CapabilitySelector, payload: BytesLike, policy: GatherPolicy, deadlineMs: number): Promise<Gather>;
-    // (undocumented)
-    readonly inboxRoute: InboxRoute;
     // (undocumented)
     readonly laser: Laser;
     // (undocumented)
@@ -677,35 +632,20 @@ export class AgentContext {
     // (undocumented)
     respondInput(replyTopic: string, response: BytesLike): Promise<void>;
     // (undocumented)
-    readonly respondOn: string | undefined;
-    // (undocumented)
     send(topic: string, payload: BytesLike, provenance: Provenance): Promise<void>;
     // (undocumented)
     spawnSubconversation(): Provenance;
 }
 
 // @public (undocumented)
-export function agentContext(laser: Laser, message: AgentMessage, options?: {
+export function agentCtx(laser: Laser, message: AgentMessage, options?: {
     readonly agent?: AgentId;
     readonly respondOn?: string;
     readonly inboxRoute?: InboxRoute;
-}): AgentContext;
+}): AgentCtx;
 
 // @public (undocumented)
-export interface AgentContextOptions {
-    // (undocumented)
-    readonly agent?: AgentId;
-    // (undocumented)
-    readonly inboxRoute?: InboxRoute;
-    readonly nowMicros?: () => bigint;
-    // (undocumented)
-    readonly respondOn?: string;
-    // (undocumented)
-    readonly signingKey?: SigningKey;
-}
-
-// @public (undocumented)
-interface AgentDeadLetter {
+export interface AgentDeadLetter {
     // (undocumented)
     readonly attempts: number;
     // (undocumented)
@@ -719,7 +659,7 @@ interface AgentDeadLetter {
 }
 
 // @public (undocumented)
-interface AgentEnvelope {
+export interface AgentEnvelope {
     // (undocumented)
     readonly body: Uint8Array;
     // (undocumented)
@@ -729,7 +669,7 @@ interface AgentEnvelope {
     // (undocumented)
     readonly channel?: ChannelId;
     // (undocumented)
-    readonly conversation: WireConversationId;
+    readonly conversation: ConversationId_2;
     // (undocumented)
     readonly correlation?: CorrelationId;
     // (undocumented)
@@ -788,13 +728,13 @@ export type AgentErrorCode = {
 };
 
 // @public (undocumented)
-function agentErrorCode(value: AgentErrorCode): number;
+export function agentErrorCode(value: AgentErrorCode): number;
 
 // @public (undocumented)
 export function agentErrorCodeFromCode(code: number): AgentErrorCode;
 
 // @public (undocumented)
-export const AgentErrorCodeName: {
+const AgentErrorCodeName: {
     readonly InvalidRequest: 1;
     readonly Unauthorized: 2;
     readonly Unsupported: 3;
@@ -807,8 +747,6 @@ export const AgentErrorCodeName: {
 // @public
 export class AgentHandle implements AsyncDisposable {
     [Symbol.asyncDispose](): Promise<void>;
-    // Warning: (ae-forgotten-export) The symbol "AgentDefinition" needs to be exported by the entry point full.d.ts
-    constructor(definition: AgentDefinition, laser: Laser);
     // (undocumented)
     abort(): void;
     // (undocumented)
@@ -821,19 +759,20 @@ export class AgentHandle implements AsyncDisposable {
 // @public (undocumented)
 export interface AgentHandler {
     // (undocumented)
-    handle(message: AgentMessage, context: AgentContext): Promise<void>;
+    handle(message: AgentMessage, context: AgentCtx): Promise<void>;
 }
 
 // @public (undocumented)
 export class AgentId {
     // (undocumented)
-    asString(): string;
+    asStr(): string;
     // (undocumented)
     equals(other: AgentId): boolean;
     // (undocumented)
     static new(name: string): AgentId;
     // (undocumented)
     toString(): string;
+    wireId(): AgentId_2;
 }
 
 // @public (undocumented)
@@ -904,13 +843,18 @@ export function agentMessageBody(message: AgentMessage): Uint8Array;
 // @public (undocumented)
 export interface AgentMiddleware {
     // (undocumented)
-    afterHandle?(message: AgentMessage, result: HandlerResult, attempt: number): Promise<void>;
+    afterHandle?(message: AgentMessage, result: {
+        readonly kind: "ok";
+    } | {
+        readonly kind: "error";
+        readonly error: LaserError;
+    }, attempt: number): Promise<void>;
     // (undocumented)
     beforeHandle?(message: AgentMessage): Promise<void>;
 }
 
 // @public (undocumented)
-export type AgentOutcome = {
+type AgentOutcome = {
     readonly kind: "submitted";
     readonly run: AgentRunInfo;
 } | {
@@ -929,7 +873,7 @@ export type AgentOutcome = {
 };
 
 // @public (undocumented)
-interface AgentPresence {
+export interface AgentPresence {
     // (undocumented)
     readonly agent: AgentId_2;
     // (undocumented)
@@ -939,17 +883,7 @@ interface AgentPresence {
 }
 
 // @public (undocumented)
-export interface AgentPresenceInput {
-    // (undocumented)
-    readonly agent: AgentId;
-    // (undocumented)
-    readonly inbox?: string;
-}
-
-// @public (undocumented)
 export class AgentRegistry {
-    // Warning: (ae-forgotten-export) The symbol "RegistryCache" needs to be exported by the entry point full.d.ts
-    constructor(cursor: Cursor, cache: RegistryCache, clientMetadata: () => ClientMetadataRequest, nowMicros?: () => bigint, verifier?: KeyRegistry | undefined);
     // (undocumented)
     agents(): readonly RegisteredCard[];
     // (undocumented)
@@ -1010,19 +944,19 @@ export type AgentRunState = "submitted" | "running" | "completed" | "cancelled" 
 function agentRunStateFromWord(word: string, context: string): AgentRunState;
 
 // @public (undocumented)
-function agentRunStateIsTerminal(state: AgentRunState): boolean;
+export function agentRunStateIsTerminal(state: AgentRunState): boolean;
 
 // @public (undocumented)
 export class AgentScope {
-    constructor(laser: Laser, id: AgentId);
     // (undocumented)
     advertise(listenOn: string, capabilities: readonly CapabilityDescriptor[]): Promise<void>;
     // (undocumented)
     ask(requestTopic: string, replyTopic: string, payload: BytesLike, provenance: Provenance, timeoutMs: number, signal?: AbortSignal): Promise<AgentMessage>;
+    contract(router: Router): ContractBuilder;
     // (undocumented)
     readonly id: AgentId;
     // (undocumented)
-    publishCard(card: AgentCard): Promise<void>;
+    publishCard(card: AgentCard_2): Promise<void>;
     // (undocumented)
     send(topic: string, payload: BytesLike, provenance: Provenance): Promise<void>;
 }
@@ -1081,13 +1015,14 @@ export const AgentTopic: {
     readonly Registry: "agent.registry";
     readonly WorkflowJournal: "agent.workflow_journal";
     readonly Dlq: "agent.dlq";
+    readonly Custom: (name: string) => string;
 };
 
 // @public (undocumented)
-export type AgentTopic = (typeof AgentTopic)[keyof typeof AgentTopic];
+export type AgentTopic = Exclude<(typeof AgentTopic)[keyof typeof AgentTopic], typeof AgentTopic.Custom>;
 
 // @public (undocumented)
-export type AgentWorkflowError = {
+type AgentWorkflowError = {
     readonly kind: "unsupported";
     readonly message: string;
 } | {
@@ -1136,7 +1071,7 @@ interface AggCall {
 }
 
 // @public (undocumented)
-type AggFunc = "count" | "count_distinct" | "sum" | "avg" | "min" | "max" | "percentile" | "std_dev";
+export type AggFunc = "count" | "count_distinct" | "sum" | "avg" | "min" | "max" | "percentile" | "std_dev";
 
 // @public (undocumented)
 interface Aggregate {
@@ -1206,9 +1141,6 @@ export type AgUiEvent = {
 };
 
 // @public (undocumented)
-export function aguiEvents(laser: Laser, conversation: ConversationId, topic: string): Promise<readonly AgUiEvent[]>;
-
-// @public (undocumented)
 export class AmbiguousMutationError extends LaserError {
     constructor(message: string, options?: {
         cause?: unknown;
@@ -1216,7 +1148,14 @@ export class AmbiguousMutationError extends LaserError {
 }
 
 // @public (undocumented)
-export const ANY_ROUTE_POLICY: RoutePolicy;
+export type AmbiguousMutationRecovery = {
+    readonly kind: "waitForLeaseExpiry";
+    readonly ttlMicros: bigint;
+} | {
+    readonly kind: "repeatPrepared";
+} | {
+    readonly kind: "reconcileTargetPrecondition";
+};
 
 // @public (undocumented)
 export interface AppliedPolicy {
@@ -1233,8 +1172,11 @@ export interface AppliedPolicy {
     readonly revision?: number;
 }
 
-// @public (undocumented)
-export function applyJsonPatch(document: unknown, patch: unknown): unknown;
+// @public
+export function appliedPolicyFiltered(groupId: bigint | undefined, digest: Uint8Array): AppliedPolicy;
+
+// @public
+export function appliedPolicyUnfiltered(groupId: bigint, policyGeneration: bigint): AppliedPolicy;
 
 // @public (undocumented)
 export function applyRoute(router: Router, provenance: Provenance): Provenance;
@@ -1246,7 +1188,7 @@ const ARROW_IPC_CONTRACT_VERSION = 1;
 const ARROW_IPC_MEDIA_TYPE = "application/vnd.apache.arrow.stream";
 
 // @public (undocumented)
-interface ArrowIpcMessageMetadata {
+export interface ArrowIpcMessageMetadata {
     // (undocumented)
     readonly contractVersion: number;
     // (undocumented)
@@ -1292,7 +1234,10 @@ type ArrowIpcRejectionCode = "file_format" | "missing_schema" | "missing_diction
 type ArrowTimestampUnit = "microsecond";
 
 // @public (undocumented)
-export function assertNever(value: never): never;
+export interface Artifact {
+    // (undocumented)
+    readonly text: string;
+}
 
 // @public (undocumented)
 interface AttemptColumnMetrics {
@@ -1326,83 +1271,6 @@ interface AttemptObject {
 
 // @public (undocumented)
 export function authorizeEdge(claims: EdgeClaims, expectedAudience: string, requiredScope: string): EdgeDenial | undefined;
-
-declare namespace authz {
-    export {
-        resourcePatternAll,
-        resourcePatternLiteral,
-        resourcePatternPrefix,
-        resourcePatternMatches,
-        encodeResourcePattern,
-        decodeResourcePattern,
-        encodeGrant,
-        decodeGrant,
-        encodeRole,
-        decodeRole,
-        validateRoleName,
-        featureAction,
-        actionIndex,
-        grantsAllow,
-        delegatedAllow,
-        encodeWhoamiReq,
-        encodeWhoamiReply,
-        decodeWhoamiReply,
-        encodeListRolesReq,
-        decodeListRolesReq,
-        encodeListRolesReply,
-        decodeListRolesReply,
-        encodeGetRoleReq,
-        decodeGetRoleReq,
-        encodeGetBindingsReq,
-        decodeGetBindingsReq,
-        encodeBindingsReply,
-        decodeBindingsReply,
-        encodeDefineRoleReq,
-        decodeDefineRoleReq,
-        encodeDeleteRoleReq,
-        decodeDeleteRoleReq,
-        encodeBindRolesReq,
-        decodeBindRolesReq,
-        encodeAuthzSubject,
-        decodeAuthzSubject,
-        encodeAuthzHistoryReq,
-        decodeAuthzHistoryReq,
-        encodeAuthzEventKind,
-        decodeAuthzEventKind,
-        encodeAuthzEvent,
-        decodeAuthzEvent,
-        encodeAuthzHistoryReply,
-        decodeAuthzHistoryReply,
-        encodeAuthzError,
-        decodeAuthzError,
-        encodeAuthzReply,
-        decodeAuthzReply,
-        Effect,
-        Feature,
-        Action,
-        ResourceKind,
-        ResourcePattern,
-        Grant,
-        Role,
-        ACTION_COUNT,
-        WhoamiReply,
-        ListRolesReq,
-        ListRolesReply,
-        GetRoleReq,
-        GetBindingsReq,
-        BindingsReply,
-        DefineRoleReq,
-        DeleteRoleReq,
-        BindRolesReq,
-        AuthzSubject,
-        AuthzHistoryReq,
-        AuthzEventKind,
-        AuthzEvent,
-        AuthzHistoryReply,
-        AuthzError,
-        AuthzReply
-    }
-}
 
 // @public (undocumented)
 const AUTHZ_OP_VERSION = 1;
@@ -1481,6 +1349,7 @@ export interface AuthzHistoryReply {
     readonly events: readonly AuthzEvent[];
     // (undocumented)
     readonly nextAfterRevision?: bigint;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -1491,6 +1360,7 @@ interface AuthzHistoryReq {
     readonly limit: number;
     // (undocumented)
     readonly subject: AuthzSubject;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -1538,6 +1408,9 @@ export type AuthzSubject = {
 const authzUserRolesPath: (userId: number) => string;
 
 // @public (undocumented)
+export function backend(capabilities: Capabilities, resourceId: BackendResourceId): BackendDescriptor | undefined;
+
+// @public (undocumented)
 const BACKEND_DESCRIPTOR_VERSION = 1;
 
 // @public (undocumented)
@@ -1562,7 +1435,7 @@ interface BackendBinding {
 }
 
 // @public (undocumented)
-interface BackendDescriptor {
+export interface BackendDescriptor {
     // (undocumented)
     readonly descriptorVersion: number;
     // (undocumented)
@@ -1634,7 +1507,7 @@ type BackendMode = "operational" | "lakehouse";
 type BackendObservedState = "disabled" | "starting" | "ready" | "degraded" | "unavailable";
 
 // @public (undocumented)
-interface BackendReadiness {
+export interface BackendReadiness {
     // (undocumented)
     readonly observedAtMicros: bigint;
     // (undocumented)
@@ -1647,7 +1520,10 @@ interface BackendReadiness {
 type BackendReadinessCode = "disabled" | "configuration_pending" | "configuration_rejected" | "credential_unavailable" | "object_store_unavailable" | "catalog_unavailable" | "query_runtime_unavailable" | "generation_mismatch" | "probe_failed";
 
 // @public (undocumented)
-interface BackendReadinessReason {
+export function backendReadinessNotReady(code: BackendReadinessCode): BackendReadiness;
+
+// @public (undocumented)
+export interface BackendReadinessReason {
     // (undocumented)
     readonly code: BackendReadinessCode;
     // (undocumented)
@@ -1670,6 +1546,23 @@ const BATCH_OP_VERSION = 1;
 // @public (undocumented)
 const BatchCommand: ManagedCommand<BatchRequest, BatchReply>;
 
+// @public
+export class BatchingProducer implements AsyncDisposable {
+    [Symbol.asyncDispose](): Promise<void>;
+    close(): Promise<void>;
+    flush(): Promise<void>;
+    send(payload: BytesLike, headers?: ReadonlyMap<string, HeaderValue>): Promise<void>;
+}
+
+// @public
+export class BatchingProducerBuilder {
+    build(): BatchingProducer;
+    linger(milliseconds: number): this;
+    maxBytes(bytes: number): this;
+    maxRecords(count: number): this;
+    partitionKey(key: string | BytesLike): this;
+}
+
 // @public (undocumented)
 interface BatchItem {
     // (undocumented)
@@ -1680,7 +1573,6 @@ interface BatchItem {
 
 // @public (undocumented)
 export class BatchPublishRequest {
-    constructor(topic: Topic);
     // (undocumented)
     addArrowIpc(payload: BytesLike, metadata: ArrowIpcMessageMetadata): this;
     // (undocumented)
@@ -1698,17 +1590,13 @@ export class BatchPublishRequest {
     // (undocumented)
     addJsonWithProjection<T>(projectionRef: string, value: T, codec: Codec<T>): this;
     // (undocumented)
-    addMessagePack(value: unknown): this;
-    // (undocumented)
-    addMessagePack<T>(value: T, codec: Codec<T>): this;
-    // (undocumented)
-    addMessagePackWithProjection(projectionRef: string, value: unknown): this;
-    // (undocumented)
-    addMessagePackWithProjection<T>(projectionRef: string, value: T, codec: Codec<T>): this;
-    // (undocumented)
     addMsgpack(value: unknown): this;
     // (undocumented)
     addMsgpack<T>(value: T, codec: Codec<T>): this;
+    // (undocumented)
+    addMsgpackWithProjection(projectionRef: string, value: unknown): this;
+    // (undocumented)
+    addMsgpackWithProjection<T>(projectionRef: string, value: T, codec: Codec<T>): this;
     // (undocumented)
     addPayload(payload: BytesLike): this;
     // (undocumented)
@@ -1728,9 +1616,9 @@ export class BatchPublishRequest {
     // (undocumented)
     extendJson<T>(values: Iterable<T>, codec: Codec<T>): this;
     // (undocumented)
-    extendMessagePack(values: Iterable<unknown>): this;
+    extendMsgpack(values: Iterable<unknown>): this;
     // (undocumented)
-    extendMessagePack<T>(values: Iterable<T>, codec: Codec<T>): this;
+    extendMsgpack<T>(values: Iterable<T>, codec: Codec<T>): this;
     // (undocumented)
     header(key: string, value: string): this;
     // (undocumented)
@@ -1741,8 +1629,6 @@ export class BatchPublishRequest {
     get isEmpty(): boolean;
     // (undocumented)
     get length(): number;
-    // (undocumented)
-    metadata(key: string, value: string): this;
     // (undocumented)
     partitionKey(value: BytesLike): this;
     // (undocumented)
@@ -1768,15 +1654,13 @@ interface BatchRequest {
 }
 
 // @public (undocumented)
-export const BEST_EFFORT: GatherPolicy;
-
-// @public (undocumented)
 function bigIntToBytes16(value: bigint): Uint8Array;
 
 // @public (undocumented)
+export type BinaryValue = Uint8Array;
+
+// @public (undocumented)
 export class Bindings {
-    // Warning: (ae-forgotten-export) The symbol "PublishControl" needs to be exported by the entry point full.d.ts
-    constructor(publishControl: PublishControl);
     // (undocumented)
     apply(binding: ProjectionBinding): Promise<void>;
     // (undocumented)
@@ -1790,6 +1674,7 @@ const BINDINGS_PATH = "/agdx/bindings";
 interface BindingsReply {
     // (undocumented)
     readonly roles: readonly string[];
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -1805,6 +1690,7 @@ interface BindRolesReq {
     readonly roles: readonly string[];
     // (undocumented)
     readonly userId: number;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -1829,15 +1715,6 @@ interface BodyRef {
 
 // @public (undocumented)
 type BoundaryRelation = "current" | "historical" | "ahead_of_observed_checkpoint";
-
-// @public (undocumented)
-export function bridgeHopMetadata(hops: readonly string[]): {
-    readonly kind: "list";
-    readonly value: readonly {
-        readonly kind: "string";
-        readonly value: string;
-    }[];
-};
 
 // @public (undocumented)
 type BrowseOutcome = {
@@ -1877,32 +1754,49 @@ type BrowseReply = {
     readonly value: unknown;
 };
 
+// @public
+export class Bson<T = unknown> implements Codec<T> {
+    constructor(decodeValue?: (value: unknown) => T);
+    // (undocumented)
+    readonly contentType: ContentType;
+    // (undocumented)
+    decode(payload: Uint8Array): T;
+    // (undocumented)
+    encode(value: T): Uint8Array;
+}
+
 // @public (undocumented)
 export class Budget {
     // (undocumented)
-    readonly invocationLimit?: number | undefined;
-    // (undocumented)
     invocations(invocations: number): Budget;
-    // (undocumented)
-    readonly tokenLimit?: bigint | undefined;
     // (undocumented)
     static tokens(tokens: bigint): Budget;
     // (undocumented)
     static unlimited(): Budget;
     // (undocumented)
     wallClock(milliseconds: number): Budget;
+}
+
+// @public (undocumented)
+export class BudgetExceededError extends LaserError {
+    constructor(ceiling: bigint, spent: bigint);
     // (undocumented)
-    readonly wallClockLimitMs?: number | undefined;
+    readonly ceiling: bigint;
+    // (undocumented)
+    readonly spent: bigint;
 }
 
 // @public (undocumented)
 function bytes16ToBigInt(bytes: Uint8Array): bigint;
 
-// @public (undocumented)
+// @public
 export class CancelledError extends LaserError {
     constructor(message: string, options?: {
         cause?: unknown;
+        run?: string;
     });
+    // (undocumented)
+    readonly run: string | undefined;
 }
 
 // @public (undocumented)
@@ -1938,9 +1832,6 @@ const CanonicalHeaderKind: {
 type CanonicalHeaderKind = (typeof CanonicalHeaderKind)[keyof typeof CanonicalHeaderKind];
 
 // @public (undocumented)
-function canonicalSchemaBytes(schema: LogicalSchema): Uint8Array;
-
-// @public (undocumented)
 export interface Capabilities {
     // (undocumented)
     readonly a2aGateway: boolean;
@@ -1950,36 +1841,22 @@ export interface Capabilities {
     readonly authz: boolean;
     // (undocumented)
     readonly backends: readonly BackendDescriptor[];
-    // Warning: (ae-forgotten-export) The symbol "DestinationCapabilities" needs to be exported by the entry point full.d.ts
-    //
     // (undocumented)
-    readonly destinations: DestinationCapabilities;
+    readonly destinations: DestinationCaps;
     // (undocumented)
-    readonly durableDedup: boolean;
-    // (undocumented)
-    readonly filters: FilterCapabilities;
+    readonly filters: FilterCaps;
     // (undocumented)
     readonly forks: boolean;
     // (undocumented)
     readonly graph: boolean;
-    // Warning: (ae-forgotten-export) The symbol "HelloOutcome" needs to be exported by the entry point full.d.ts
-    //
     // (undocumented)
     readonly hello: HelloOutcome;
-    // Warning: (ae-forgotten-export) The symbol "KvCapabilities" needs to be exported by the entry point full.d.ts
-    //
     // (undocumented)
-    readonly kv: KvCapabilities;
+    readonly kv: KvCaps;
     // (undocumented)
     readonly managed: boolean;
-    // Warning: (ae-forgotten-export) The symbol "QueryCapabilities_2" needs to be exported by the entry point full.d.ts
-    //
     // (undocumented)
-    readonly query: QueryCapabilities_2;
-    // (undocumented)
-    readonly sessions: boolean;
-    // (undocumented)
-    readonly topology?: WireTopology;
+    readonly query: QueryCaps;
     // (undocumented)
     readonly versions?: OpVersions;
     // (undocumented)
@@ -2023,7 +1900,13 @@ export interface CapabilitySelector {
 export function capabilitySelector(skill: string, policy: RoutePolicy, principal?: PrincipalId): CapabilitySelector;
 
 // @public (undocumented)
-export type CapabilitySurface = "managed" | "query" | "destinations" | "kv" | "kvCas" | "kvCasFenced" | "kvFencedLeases" | "graph" | "forks" | "agentWorkflow" | "watch" | "authz" | "filters" | "filterCatalog";
+export function cardAvailableFor(card: RegisteredCard, skillId: string): boolean;
+
+// @public (undocumented)
+export function cardIsFresh(card: RegisteredCard, nowMicros: bigint): boolean;
+
+// @public (undocumented)
+export function cardServes(card: RegisteredCard, skillId: string): boolean;
 
 // @public (undocumented)
 export type CasExpect = {
@@ -2033,16 +1916,8 @@ export type CasExpect = {
     readonly kind: "absent";
 };
 
-// @public (undocumented)
-export interface CatalogPageOptions {
-    // (undocumented)
-    readonly page?: number;
-    // (undocumented)
-    readonly pageSize?: number;
-}
-
 // @public
-export interface CatalogPosition {
+interface CatalogPosition {
     // (undocumented)
     readonly offset: bigint;
     readonly operationId?: bigint;
@@ -2053,11 +1928,28 @@ export interface CatalogPosition {
 // @public (undocumented)
 const CAUSAL_PARENT = "agdx.cause";
 
-// @public (undocumented)
-export function cborCodec<T>(decodeValue: ValueDecoder<T>): Codec<T>;
+// @public
+export class Cbor<T = unknown> implements Codec<T> {
+    constructor(decodeValue?: (value: unknown) => T);
+    // (undocumented)
+    readonly contentType: ContentType;
+    // (undocumented)
+    decode(payload: Uint8Array): T;
+    // (undocumented)
+    encode(value: T): Uint8Array;
+}
 
 // @public (undocumented)
 type CborMap = ReadonlyMap<unknown, unknown>;
+
+// @public (undocumented)
+export class Chain implements ContextPolicy {
+    constructor(policies: readonly ContextPolicy[]);
+    // (undocumented)
+    readonly policies: readonly ContextPolicy[];
+    // (undocumented)
+    select(history: readonly ContextMessage[]): readonly ContextMessage[];
+}
 
 // @public (undocumented)
 const CHANGE_OP_VERSION = 1;
@@ -2094,31 +1986,20 @@ export class ChannelId extends WireId<"ChannelId"> {
 }
 
 // @public (undocumented)
-export interface CheckedBody {
-    // (undocumented)
-    readonly contentType?: typeof ContentType.Ref;
-    // (undocumented)
+export function checkIn(store: BlobStore, thresholdBytes: number, payload: Uint8Array): Promise<{
     readonly payload: Uint8Array;
-}
-
-// @public (undocumented)
-export function checkIn(store: BlobStore, thresholdBytes: number, payload: Uint8Array): Promise<CheckedBody>;
+    readonly contentType?: typeof ContentType.Ref;
+}>;
 
 // @public
 export class Checkpoint {
-    // (undocumented)
-    static capture(laser: Laser, topics: readonly string[]): Promise<Checkpoint>;
-    // (undocumented)
-    static empty(): Checkpoint;
-    // (undocumented)
     static fromJSON(value: unknown): Checkpoint;
     // (undocumented)
     isEmpty(): boolean;
-    // (undocumented)
-    toJSON(): Record<string, Record<string, string>>;
+    toJSON(): {
+        readonly per_topic: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+    };
     topicOffsets(topic: string): ReadonlyMap<number, bigint> | undefined;
-    // (undocumented)
-    get topics(): readonly string[];
 }
 
 // @public (undocumented)
@@ -2128,7 +2009,7 @@ const CHECKPOINT_OP_VERSION = 1;
 const CheckpointCommand: ManagedCommand<CheckpointRequestEnvelope, CheckpointReply>;
 
 // @public (undocumented)
-type CheckpointError = {
+export type CheckpointError = {
     readonly kind: "invalid";
     readonly message: string;
 } | {
@@ -2148,6 +2029,15 @@ type CheckpointError = {
     readonly expected: number;
     readonly got: number;
 };
+
+// @public
+export class CheckpointExecutionError extends LaserError {
+    constructor(message: string, detail: CheckpointError, options?: {
+        cause?: unknown;
+    });
+    // (undocumented)
+    readonly detail: CheckpointError;
+}
 
 // @public (undocumented)
 export type CheckpointMutationResult = {
@@ -2218,7 +2108,7 @@ type CheckpointReply = {
 };
 
 // @public (undocumented)
-interface CheckpointRequestEnvelope {
+export interface CheckpointRequestEnvelope {
     // (undocumented)
     readonly expectedGlobalStateRevision: bigint;
     // (undocumented)
@@ -2256,7 +2146,7 @@ export class ChunkAssembler {
 }
 
 // @public (undocumented)
-function chunkEnvelope(conversation: WireConversationId, source: AgentId_2, correlation: CorrelationId, channel: ChannelId, sequence: bigint, body: Uint8Array): AgentEnvelope;
+export function chunkEnvelope(conversation: ConversationId_2, source: AgentId_2, correlation: CorrelationId, channel: ChannelId, sequence: bigint, body: Uint8Array): AgentEnvelope;
 
 // @public (undocumented)
 const CLIENT_METADATA_OP_VERSION = 1;
@@ -2309,8 +2199,6 @@ interface ClientMetadataQuery {
 
 // @public (undocumented)
 export class ClientMetadataRequest {
-    // Warning: (ae-forgotten-export) The symbol "LaserTransport" needs to be exported by the entry point full.d.ts
-    constructor(transport: Pick<LaserTransport, "sendManaged">);
     // (undocumented)
     after(clientId: number): this;
     // (undocumented)
@@ -2326,9 +2214,6 @@ export class ClientMetadataRequest {
 }
 
 // @public (undocumented)
-export type ClientOwnership = "owned" | "borrowed";
-
-// @public (undocumented)
 const CLIENTS_PATH = "/agdx/clients";
 
 // @public (undocumented)
@@ -2340,10 +2225,13 @@ export interface Clock {
 // @public (undocumented)
 type CmpOp = "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "in" | "contains" | "prefix";
 
-// @public (undocumented)
-export interface Codec<T> {
+// @public
+export function code(error: unknown): ResultCode;
+
+// @public
+export interface Codec<T> extends Decoder<T> {
     // (undocumented)
-    decode(bytes: Uint8Array): T;
+    readonly contentType: ContentType;
     // (undocumented)
     encode(value: T): Uint8Array;
 }
@@ -2353,10 +2241,6 @@ export class CodecError extends LaserError {
     constructor(message: string, surface: string, operation: string, options?: {
         cause?: unknown;
     });
-    // (undocumented)
-    readonly operation: string;
-    // (undocumented)
-    readonly surface: string;
 }
 
 // @public
@@ -2376,7 +2260,40 @@ export interface CoercedPredicate {
 }
 
 // @public (undocumented)
-function commandEnvelope(record: RecordId, conversation: WireConversationId, source: AgentId_2, correlation: CorrelationId, body: Uint8Array): AgentEnvelope;
+export function commandEnvelope(record: RecordId, conversation: ConversationId_2, source: AgentId_2, correlation: CorrelationId, body: Uint8Array): AgentEnvelope;
+
+// @public
+export function commandFromMessageSend(record: RecordId, conversation: ConversationId_2, source: AgentId_2, correlation: CorrelationId, paramsJson: Uint8Array): AgentEnvelope;
+
+// @public
+export type CommitPolicy = {
+    readonly kind: "disabled";
+} | {
+    readonly kind: "interval";
+    readonly intervalMs: number;
+} | {
+    readonly kind: "polling";
+} | {
+    readonly kind: "intervalOrPolling";
+    readonly intervalMs: number;
+} | {
+    readonly kind: "all";
+} | {
+    readonly kind: "intervalOrAll";
+    readonly intervalMs: number;
+} | {
+    readonly kind: "each";
+} | {
+    readonly kind: "intervalOrEach";
+    readonly intervalMs: number;
+} | {
+    readonly kind: "every";
+    readonly count: number;
+} | {
+    readonly kind: "intervalOrEvery";
+    readonly intervalMs: number;
+    readonly count: number;
+};
 
 // @public
 export class CompiledFilter {
@@ -2385,34 +2302,31 @@ export class CompiledFilter {
     // (undocumented)
     readonly digest: Uint8Array;
     evaluate(record: FilterRecord, limits?: DecodeLimits): FilterVerdict;
-    explain(record: FilterRecord, limits?: DecodeLimits): FilterExplanation;
-    // (undocumented)
-    get faultPolicy(): FaultPolicy;
-    faultReason(record: FilterRecord, limits?: DecodeLimits): FaultReason | undefined;
-    // (undocumented)
-    readonly filter: ConsumerFilter;
-    get needsHeaders(): boolean;
-    outcomeOf(record: FilterRecord, limits?: DecodeLimits): {
+    evaluateWithFault(record: FilterRecord, limits?: DecodeLimits): {
         verdict: FilterVerdict;
         fault?: FaultReason;
     };
+    explain(record: FilterRecord, limits?: DecodeLimits): FilterExplanation;
+    // (undocumented)
+    get faultPolicy(): FaultPolicy;
+    // (undocumented)
+    readonly filter: ConsumerFilter;
+    get headerNeed(): HeaderNeed;
     policyFor(reason: FaultReason): FaultPolicy;
     // (undocumented)
     get readsHeaders(): boolean;
     // (undocumented)
     get readsPayload(): boolean;
+    recordPolicy(reason: FaultReason): RecordPolicy | undefined;
 }
 
 // @public (undocumented)
 export class CompiledSchema {
     // (undocumented)
-    codec<T>(decodeValue: (value: unknown) => T): Codec<T>;
-    // (undocumented)
     static compile(schema: SchemaDef): CompiledSchema;
     // (undocumented)
     decode(payload: Uint8Array): unknown;
-    // (undocumented)
-    encode(value: unknown): Uint8Array;
+    encodeAvro(body: unknown): Uint8Array;
     // (undocumented)
     readonly kind: CompiledSchemaKind;
     // (undocumented)
@@ -2464,62 +2378,52 @@ export type Consistency = "eventual" | "read_your_writes" | "strong";
 function consistencyGateCheck(applied: bigint, required: bigint, consistency: Consistency, what: string): QueryError | undefined;
 
 // @public (undocumented)
+export function consistencyIsEventual(consistency: Consistency): boolean;
+
+// @public (undocumented)
 function consistencyToWord(value: Consistency): string;
+
+// @public
+export interface ConsolidateOptions {
+    readonly pruneSummarized?: boolean;
+    readonly summarizer?: Summarizer;
+}
 
 // @public (undocumented)
 export interface ConsolidationReport {
-    // (undocumented)
-    readonly forgotten: number;
-    // (undocumented)
-    readonly kept: number;
-    // (undocumented)
-    readonly scanned: number;
+    readonly derived: number;
+    readonly pruned: number;
+    readonly reweighted: number;
+    readonly summarized: number;
 }
 
 // @public (undocumented)
 export interface Consolidator {
     // (undocumented)
-    consolidate(memory: Memory, scope: MemoryScope): Promise<ConsolidationReport>;
-}
-
-// @public (undocumented)
-export interface ConsumedMessage {
-    // (undocumented)
-    readonly headers: ReadonlyMap<string, IggyHeaderValue>;
-    // (undocumented)
-    readonly offset: bigint;
-    // (undocumented)
-    readonly partitionId: number;
-    // (undocumented)
-    readonly payload: Uint8Array;
-    // (undocumented)
-    readonly timestampMicros?: bigint;
+    consolidate(scope: MemoryScope, signal?: AbortSignal): Promise<ConsolidationReport>;
 }
 
 // @public
-export class Consumer implements AsyncIterable<ConsumedMessage>, AsyncDisposable {
+export class Consumer implements AsyncIterable<ConsumerMessage>, AsyncDisposable {
+    [INTERNAL_RETURN_DELIVERY](message: ConsumerMessage): void;
     [Symbol.asyncDispose](): Promise<void>;
     // (undocumented)
-    [Symbol.asyncIterator](): AsyncIterator<ConsumedMessage>;
-    // Warning: (ae-forgotten-export) The symbol "ConsumerTarget" needs to be exported by the entry point full.d.ts
-    constructor(transport: LaserTransport, streamName: string, topicName: string, target: ConsumerTarget, options?: ConsumerOptions, reader?: FilteredReader | undefined);
-    commit(message: ConsumedMessage): Promise<void>;
+    [Symbol.asyncIterator](): AsyncIterator<ConsumerMessage>;
+    commit(message: ConsumerMessage): Promise<void>;
+    deleteOffset(partitionId?: number): Promise<void>;
     // (undocumented)
     lastConsumedOffset(partitionId: number): bigint | undefined;
-    // (undocumented)
+    lastStoredOffset(partitionId: number): bigint | undefined;
     nextWithin(timeoutMs: number, options?: {
         readonly signal?: AbortSignal;
-    }): Promise<ConsumedMessage | null>;
+    }): Promise<ConsumerMessage>;
     shutdown(): Promise<void>;
-    // (undocumented)
-    storedOffset(partitionId: number): Promise<{
-        readonly storedOffset: bigint;
-        readonly currentOffset: bigint;
-    } | undefined>;
+    storedOffset(partitionId: number): Promise<StoredOffset | undefined>;
+    storeOffset(offset: bigint, partitionId?: number): Promise<void>;
     // (undocumented)
     stream(options?: {
         readonly signal?: AbortSignal;
-    }): AsyncIterable<ConsumedMessage>;
+    }): AsyncIterable<ConsumerMessage>;
 }
 
 // @public
@@ -2550,18 +2454,17 @@ export const ConsumerFilter: {
     readonly withFaultPolicy: (filter: ConsumerFilter, faultPolicy: FaultPolicy) => ConsumerFilter;
     readonly withForeignPolicy: (filter: ConsumerFilter, foreignPolicy: RecordPolicy) => ConsumerFilter;
     readonly withMismatchPolicy: (filter: ConsumerFilter, mismatchPolicy: RecordPolicy) => ConsumerFilter;
+    readonly digest: (filter: ConsumerFilter) => Uint8Array;
 };
 
 // @public
-export function consumerFilterDigest(filter: ConsumerFilter): Uint8Array;
+function consumerFilterDigest(filter: ConsumerFilter): Uint8Array;
 
 // @public
-export function consumerFilterJson(filter: ConsumerFilter): string;
+function consumerFilterJson(filter: ConsumerFilter): string;
 
 // @public
 export class ConsumerGroup {
-    // Warning: (ae-forgotten-export) The symbol "GroupContext" needs to be exported by the entry point full.d.ts
-    constructor(transport: LaserTransport, streamName: string, topicName: string, target: GroupTarget, context?: GroupContext | undefined);
     consumer(options?: ConsumerOptions): Promise<Consumer>;
     create(options?: CreateConsumerGroupOptions): Promise<ConsumerGroupInfo>;
     filter(): GroupFilter;
@@ -2569,10 +2472,7 @@ export class ConsumerGroup {
     info(): Promise<ConsumerGroupInfo>;
     get name(): string | undefined;
     reader(): FilteredReaderBuilder;
-    // (undocumented)
-    readonly streamName: string;
-    // (undocumented)
-    readonly topicName: string;
+    readonly topic: Topic;
 }
 
 // @public
@@ -2587,7 +2487,7 @@ export interface ConsumerGroupInfo {
 // @public (undocumented)
 export class ConsumerGroupName {
     // (undocumented)
-    asString(): string;
+    asStr(): string;
     // (undocumented)
     static forAgent(agent: AgentId): ConsumerGroupName;
     // (undocumented)
@@ -2605,20 +2505,38 @@ export class ConsumerGroupSetupError extends LaserError {
     readonly groupName: string;
     // (undocumented)
     readonly identity: FilterGroupIdentity;
+}
+
+// @public
+export interface ConsumerMessage extends Message {
+    readonly checksum: bigint;
+    readonly currentOffset: bigint;
+    readonly headersMalformed: boolean;
+    json<T = unknown>(decodeValue?: (value: unknown) => T): T;
+    readonly messageId: bigint;
+    readonly originTimestampMicros: bigint;
     // (undocumented)
-    get reason(): FilterErrorReason | undefined;
+    readonly partitionId: number;
+    readonly position: MessageId;
+    readonly timestampMicros: bigint;
+    readonly userHeaders?: Uint8Array;
 }
 
 // @public (undocumented)
 export interface ConsumerOptions {
-    // (undocumented)
-    readonly autoCommit?: boolean;
-    // (undocumented)
+    readonly allowReplay?: boolean;
+    readonly autoJoinGroup?: boolean;
     readonly batchLength?: number;
-    // (undocumented)
+    readonly commitPolicy?: CommitPolicy;
+    readonly createGroup?: boolean;
+    readonly initRetries?: {
+        readonly retries: number;
+        readonly intervalMs: number;
+    };
+    readonly pollingRetryIntervalMs?: number;
     readonly pollIntervalMs?: number;
     // (undocumented)
-    readonly startFrom?: PollingStrategy;
+    readonly startAt?: ConsumerStart;
 }
 
 // @public (undocumented)
@@ -2628,6 +2546,21 @@ export type ConsumerRef = {
 } | {
     readonly kind: "consumer";
     readonly name: string;
+};
+
+// @public
+export type ConsumerStart = {
+    readonly kind: "first";
+} | {
+    readonly kind: "last";
+} | {
+    readonly kind: "next";
+} | {
+    readonly kind: "offset";
+    readonly value: bigint;
+} | {
+    readonly kind: "timestampMicros";
+    readonly value: bigint;
 };
 
 // @public (undocumented)
@@ -2647,16 +2580,13 @@ const CONTENT_TYPE = "agdx.ct";
 function contentId(segments: readonly Uint8Array[]): bigint;
 
 // @public (undocumented)
-type ContentRef = {
+export type ContentRef = {
     readonly kind: "contentType";
     readonly value: ContentType;
 } | {
     readonly kind: "schemaId";
     readonly value: string;
 };
-
-// @public (undocumented)
-export function contentRefMode(reference: ContentRef): string;
 
 // @public (undocumented)
 export const ContentType: {
@@ -2676,28 +2606,29 @@ export const ContentType: {
 export type ContentType = (typeof ContentType)[keyof typeof ContentType];
 
 // @public (undocumented)
-function contentTypeCode(value: ContentType): number;
+export function contentTypeCode(value: ContentType): number;
 
 // @public (undocumented)
 function contentTypeFromCode(code: number): ContentType | undefined;
 
+// @public
+export const CONTEXT_READ_WINDOW = 10000;
+
 // @public (undocumented)
 export class ContextAssembler {
-    // Warning: (ae-forgotten-export) The symbol "ContextAssemblerOptions" needs to be exported by the entry point full.d.ts
-    constructor(options: ContextAssemblerOptions);
     // (undocumented)
     assemble(laser: Laser): Promise<readonly ContextMessage[]>;
     // (undocumented)
-    static builder(conversation: ConversationId): ContextAssemblerBuilder;
+    static builder(): ContextAssemblerBuilder;
 }
 
 // @public (undocumented)
 export class ContextAssemblerBuilder {
-    constructor(conversation: ConversationId);
     // (undocumented)
     acrossSubconversations(value?: boolean): this;
     // (undocumented)
     build(): ContextAssembler;
+    conversationId(conversation: ConversationId): this;
     fromCheckpoint(checkpoint: Checkpoint): this;
     fromOffsets(offsets: ReadonlyMap<number, bigint>): this;
     // (undocumented)
@@ -2707,14 +2638,8 @@ export class ContextAssemblerBuilder {
     topics(topics: readonly string[]): this;
 }
 
-// @public (undocumented)
-export class ContextChain implements ContextPolicy {
-    constructor(policies: readonly ContextPolicy[]);
-    // (undocumented)
-    readonly policies: readonly ContextPolicy[];
-    // (undocumented)
-    select(history: readonly ContextMessage[]): readonly ContextMessage[];
-}
+// @public
+export function contextCheckpoint(laser: Laser, topics: readonly string[]): Promise<Checkpoint>;
 
 // @public (undocumented)
 export interface ContextMessage {
@@ -2726,8 +2651,6 @@ export interface ContextMessage {
     readonly payload: Uint8Array;
     // (undocumented)
     readonly provenance: Provenance;
-    // (undocumented)
-    readonly timestampMicros: bigint;
     readonly topic: string;
 }
 
@@ -2739,7 +2662,6 @@ export interface ContextPolicy {
 
 // @public (undocumented)
 export class ContextScope {
-    constructor(laser: Laser, conversation: ConversationId);
     // (undocumented)
     append(topic: string, payload: BytesLike): Promise<void>;
     // (undocumented)
@@ -2752,11 +2674,12 @@ export class ContextScope {
     // (undocumented)
     fetchWith(topics: readonly string[], policy: ContextPolicy): Promise<readonly ContextMessage[]>;
     graph(name: string): GraphHandle;
+    // (undocumented)
+    readonly laser: Laser;
     memory(namespaceOrHandle: string | MemoryHandle): ScopedMemory;
     // (undocumented)
     state<State>(topics: readonly string[], bound: ReplayBound, initial: State, fold: (state: State, message: ContextMessage) => State): Promise<State>;
-    // (undocumented)
-    stateWith<State>(store: SnapshotStore, topics: readonly string[], initial: State, decodeState: (bytes: Uint8Array) => State, fold: (state: State, message: ContextMessage) => State): Promise<State>;
+    stateWith<State>(store: SnapshotStore, topics: readonly string[], init: State, fold: (state: State, message: ContextMessage) => State, decodeState?: (bytes: Uint8Array) => State): Promise<State>;
 }
 
 // @public (undocumented)
@@ -2790,7 +2713,6 @@ export type Contract = {
 
 // @public (undocumented)
 export class ContractBuilder {
-    constructor(laser: Laser, router: Router, nowMicros?: () => bigint);
     // (undocumented)
     conversation(conversation: ConversationId): this;
     // (undocumented)
@@ -2877,16 +2799,31 @@ export function conversationFor(policy: SessionPolicy, key: string): Conversatio
 
 // @public (undocumented)
 export class ConversationId {
+    asU128(): bigint;
     // (undocumented)
     static derive(seed: string): ConversationId;
     // (undocumented)
     equals(other: ConversationId): boolean;
+    // Warning: (ae-forgotten-export) The symbol "UlidSource" needs to be exported by the entry point full.d.ts
+    //
     // (undocumented)
     static new(source?: UlidSource): ConversationId;
     // (undocumented)
     static parse(text: string): ConversationId;
     // (undocumented)
     toString(): string;
+}
+
+// @public (undocumented)
+class ConversationId_2 extends WireId<"ConversationId"> {
+    // (undocumented)
+    static fromBytes(bytes: Uint8Array): ConversationId_2;
+    // (undocumented)
+    static fromU128(value: bigint): ConversationId_2;
+    // (undocumented)
+    static parse(text: string): ConversationId_2;
+    // (undocumented)
+    static tryParse(text: string): ConversationId_2 | undefined;
 }
 
 // @public (undocumented)
@@ -2930,7 +2867,6 @@ export class CrashContext {
 export interface CreateConsumerGroupOptions {
     readonly filter?: ConsumerFilter;
     readonly operationId?: bigint;
-    // Warning: (ae-forgotten-export) The symbol "GroupFilterSpec" needs to be exported by the entry point full.d.ts
     readonly policy?: GroupFilterSpec;
 }
 
@@ -2953,7 +2889,6 @@ function crockfordEncode(value: bigint): string;
 
 // @public (undocumented)
 export class Cursor {
-    constructor(transport: LaserTransport, streamName: string, topicName: string, partitionIds: readonly number[], options?: CursorOptions);
     // (undocumented)
     batch(size: number): this;
     // (undocumented)
@@ -2963,25 +2898,16 @@ export class Cursor {
     // (undocumented)
     poll(options?: {
         readonly signal?: AbortSignal;
-    }): Promise<readonly ConsumedMessage[]>;
+    }): Promise<readonly Message[]>;
     // (undocumented)
     stream(options?: {
         readonly signal?: AbortSignal;
         readonly pollIntervalMs?: number;
-    }): AsyncIterable<ConsumedMessage>;
-    until(ends: ReadonlyMap<number, bigint>): this;
+    }): AsyncIterable<Message>;
 }
 
 // @public (undocumented)
-export interface CursorOptions {
-    // (undocumented)
-    readonly batchSize?: number;
-    // (undocumented)
-    readonly readerName?: string;
-}
-
-// @public (undocumented)
-type DeadLetterReason = {
+export type DeadLetterReason = {
     readonly kind: "known";
     readonly name: keyof typeof DeadLetterReasonName;
 } | {
@@ -2990,10 +2916,10 @@ type DeadLetterReason = {
 };
 
 // @public (undocumented)
-function deadLetterReasonCode(value: DeadLetterReason): number;
+export function deadLetterReasonCode(value: DeadLetterReason): number;
 
 // @public (undocumented)
-function deadLetterReasonFromCode(code: number): DeadLetterReason;
+export function deadLetterReasonFromCode(code: number): DeadLetterReason;
 
 // @public (undocumented)
 const DeadLetterReasonName: {
@@ -3016,7 +2942,7 @@ const DEADLINE = "agdx.deadline";
 export function decide(intent: Intent, votes: readonly Vote[], nowMicros: bigint): Decision | undefined;
 
 // @public (undocumented)
-interface DecimalValue {
+export interface DecimalValue {
     // (undocumented)
     readonly precision: number;
     // (undocumented)
@@ -3024,6 +2950,9 @@ interface DecimalValue {
     // (undocumented)
     readonly unscaled: Uint8Array;
 }
+
+// @public (undocumented)
+export function decimalValueValidateCanonical(value: DecimalValue): void;
 
 // @public (undocumented)
 export class Decision {
@@ -3053,7 +2982,7 @@ function decodeAcceptedOperationJson(text: string): AcceptedOperationView;
 function decodeAgentCancel(map: CborMap, context: string): AgentCancel;
 
 // @public (undocumented)
-function decodeAgentCard(map: CborMap, context: string): AgentCard;
+function decodeAgentCard(map: CborMap, context: string): AgentCard_2;
 
 // @public (undocumented)
 function decodeAgentDeadLetter(map: CborMap, context: string): AgentDeadLetter;
@@ -3066,11 +2995,6 @@ function decodeAgentErrorBody(map: CborMap, context: string): AgentErrorBody;
 
 // @public (undocumented)
 function decodeAgentList(map: CborMap, context: string): AgentList;
-
-// Warning: (ae-forgotten-export) The symbol "ReceivedAgentMessage" needs to be exported by the entry point full.d.ts
-//
-// @public (undocumented)
-export function decodeAgentMessage(received: ReceivedAgentMessage, understoodFeatures?: bigint): DecodedAgentMessage;
 
 // @public (undocumented)
 function decodeAgentOutcome(value: unknown, context: string): AgentOutcome;
@@ -3166,6 +3090,9 @@ function decodeCapabilityDescriptor(value: unknown, context: string): Capability
 function decodeCasExpect(value: unknown, context: string): CasExpect;
 
 // @public (undocumented)
+function decodeCatalogPosition(value: unknown, context: string): CatalogPosition;
+
+// @public (undocumented)
 function decodeChangeRecord(map: CborMap, context: string): ChangeRecord;
 
 // @public (undocumented)
@@ -3192,8 +3119,11 @@ function decodeClientMetadataList(map: CborMap, context: string): ClientMetadata
 // @public (undocumented)
 function decodeClientMetadataQuery(map: CborMap, context: string): ClientMetadataQuery;
 
+// @public (undocumented)
+function decodeConsumerFilter(value: unknown, context: string): ConsumerFilter;
+
 // @public
-export function decodeConsumerFilterJson(text: string): ConsumerFilter;
+function decodeConsumerFilterJson(text: string): ConsumerFilter;
 
 // @public (undocumented)
 function decodeContentRef(value: unknown, context: string): ContentRef;
@@ -3203,18 +3133,6 @@ function decodeControlCommand(value: unknown, context: string): ControlCommand;
 
 // @public (undocumented)
 function decodeControlEnvelope(map: CborMap, context: string): ControlEnvelope;
-
-// @public (undocumented)
-export type DecodedAgentMessage = {
-    readonly kind: "message";
-    readonly message: AgentMessage;
-    readonly signatureContext?: SignatureContext;
-    readonly observedAtMicros?: bigint;
-} | {
-    readonly kind: "error";
-    readonly error: CodecError;
-    readonly payload: Uint8Array;
-};
 
 // @public (undocumented)
 function decodeDecodeRecord(map: CborMap, context: string): DecodeRecord;
@@ -3253,6 +3171,60 @@ function decodeErrorBodyJson(text: string): ErrorBody;
 function decodeFilter(value: unknown, context: string): Filter;
 
 // @public (undocumented)
+function decodeFilterCatalogCommand(value: unknown, context: string): FilterCatalogCommand;
+
+// @public (undocumented)
+function decodeFilterCatalogReply(value: unknown, context: string): FilterCatalogReply;
+
+// @public (undocumented)
+function decodeFilterCodec(value: unknown, context: string): FilterCodec;
+
+// @public (undocumented)
+function decodeFilterConsumer(value: unknown, context: string): FilterConsumer;
+
+// @public (undocumented)
+function decodeFilteredAck(value: unknown, context: string): FilteredAck;
+
+// @public (undocumented)
+function decodeFilteredPage(value: unknown, context: string): FilteredPage;
+
+// @public (undocumented)
+function decodeFilteredPollRequest(value: unknown, context: string): FilteredPollRequest;
+
+// @public (undocumented)
+function decodeFilteredStart(value: unknown, context: string): FilteredStart;
+
+// @public (undocumented)
+function decodeFilterError(value: unknown, context: string): FilterError;
+
+// @public (undocumented)
+function decodeFilterExpr(value: unknown, context: string): FilterExpr;
+
+// @public (undocumented)
+function decodeFilterGroupIdentity(value: unknown, context: string): FilterGroupIdentity;
+
+// @public (undocumented)
+function decodeFilterGroupRef(value: unknown, context: string): FilterGroupRef;
+
+// @public (undocumented)
+function decodeFilterMutation(value: unknown, context: string): FilterMutation;
+
+// @public (undocumented)
+function decodeFilterMutationOutcome(value: unknown, context: string): FilterMutationOutcome;
+
+// @public (undocumented)
+function decodeFilterMutationRequest(value: unknown, context: string): FilterMutationRequest;
+
+// @public (undocumented)
+function decodeFilterRef(value: unknown, context: string): FilterRef;
+
+// @public (undocumented)
+function decodeFilterReply(value: unknown, context: string): FilterReply;
+
+// @public (undocumented)
+function decodeFilterSource(value: unknown, context: string): FilterSource;
+
+// @public (undocumented)
 function decodeFoldSnapshot(map: CborMap, context: string): FoldSnapshot;
 
 // @public (undocumented)
@@ -3269,6 +3241,9 @@ function decodeForkInfo(map: CborMap, context: string): ForkInfo;
 
 // @public (undocumented)
 function decodeForkInfoJson(text: string): ForkInfo;
+
+// @public (undocumented)
+function decodeForkList(map: CborMap, context: string): ForkList;
 
 // @public (undocumented)
 function decodeForkOutcome(value: unknown, context: string): ForkOutcome;
@@ -3331,6 +3306,9 @@ function decodeGraphStart(value: unknown, context: string): GraphStart;
 function decodeGraphUpsert(map: CborMap, context: string): GraphUpsert;
 
 // @public (undocumented)
+function decodeHeaderScalar(value: unknown, context: string): HeaderScalar;
+
+// @public (undocumented)
 function decodeHelloReply(bytes: Uint8Array): HelloReply;
 
 // @public (undocumented)
@@ -3341,6 +3319,9 @@ function decodeIndexField(map: CborMap, context: string): IndexField;
 
 // @public (undocumented)
 function decodeIndexSchema(map: CborMap, context: string): IndexSchema;
+
+// @public
+function decodeJsonPayload(payload: Uint8Array, limits: DecodeLimits): JsonValue | PayloadFault;
 
 // @public (undocumented)
 function decodeKvCas(map: CborMap, context: string): KvCas;
@@ -3386,6 +3367,9 @@ function decodeKvMove(map: CborMap, context: string): KvMove;
 
 // @public (undocumented)
 function decodeKvNamespaceInfo(map: CborMap, context: string): KvNamespaceInfo;
+
+// @public (undocumented)
+function decodeKvNamespaces(map: CborMap, context: string): KvNamespaces;
 
 // @public (undocumented)
 function decodeKvOutcome(value: unknown, context: string): KvOutcome;
@@ -3495,9 +3479,6 @@ const decodeProjectionListJson: (text: string) => ProjectionInfo[];
 function decodeProjectionRef(map: CborMap, context: string): ProjectionRef;
 
 // @public (undocumented)
-export function decodeProvenanceHeaders(headers: ReadonlyMap<string, IggyHeaderValue>): Provenance;
-
-// @public (undocumented)
 function decodePublicCheckpointMutation(map: CborMap, context: string): PublicCheckpointMutation;
 
 // @public (undocumented)
@@ -3563,6 +3544,12 @@ function decodeQueryStatusReplyFrame(bytes: Uint8Array): QueryStatusReply;
 // @public (undocumented)
 function decodeQueryTarget(map: CborMap, context: string): QueryTarget;
 
+// @public
+export interface Decoder<T> {
+    // (undocumented)
+    decode(payload: Uint8Array): T;
+}
+
 // @public (undocumented)
 interface DecodeRecord {
     // (undocumented)
@@ -3592,6 +3579,9 @@ function decodeRetentionPolicy(map: CborMap, context: string): RetentionPolicy;
 function decodeRole(map: CborMap, context: string): Role;
 
 // @public (undocumented)
+function decodeRoleBinding(map: CborMap, context: string): RoleBinding;
+
+// @public (undocumented)
 function decodeRunBudget(map: CborMap, context: string): RunBudget;
 
 // @public (undocumented)
@@ -3618,11 +3608,17 @@ function decodeSignature(map: CborMap, context: string): Signature;
 // @public (undocumented)
 function decodeSignatureContext(map: CborMap, context: string): SignatureContext;
 
+// @public
+export function decodeSnapshot(payload: Uint8Array): FoldSnapshot;
+
 // @public (undocumented)
 function decodeSnapshotPageJson(text: string): SnapshotPageView;
 
 // @public (undocumented)
 function decodeSourceCut(map: CborMap, context: string): SourceCut;
+
+// @public (undocumented)
+function decodeSourceGeneration(value: unknown, context: string): SourceGeneration;
 
 // @public (undocumented)
 function decodeSourceIncarnation(map: CborMap, context: string): SourceIncarnation;
@@ -3673,10 +3669,25 @@ function decodeValueMap(map: CborMap, context: string): ReadonlyMap<string, Valu
 function decodeWhoamiReply(map: CborMap, context: string): WhoamiReply;
 
 // @public (undocumented)
+function decodeWhoamiReq(map: CborMap, context: string): WhoamiReq;
+
+// @public (undocumented)
 function decodeWireTopology(map: CborMap, context: string): WireTopology;
 
 // @public (undocumented)
-export function dedupKey(provenance: Provenance): string | undefined;
+export class DedicatedKvTransport implements ManagedKvTransport, AsyncDisposable {
+    // (undocumented)
+    [Symbol.asyncDispose](): Promise<void>;
+    constructor(connectionString: string);
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    ready(): Promise<void>;
+    // (undocumented)
+    reset(): Promise<void>;
+    // (undocumented)
+    send(code: number, frame: Uint8Array): Promise<Uint8Array>;
+}
 
 // @public (undocumented)
 export interface Deduplicator {
@@ -3688,6 +3699,9 @@ export interface Deduplicator {
 const DEFAULT_ARROW_IPC_POLICY: ArrowIpcPolicy;
 
 // @public (undocumented)
+export const DEFAULT_ATTEMPT_TIMEOUT_MS = 10000;
+
+// @public (undocumented)
 const DEFAULT_CHECKPOINT_MUTATIONS_TOPIC = "checkpoint.mutations";
 
 // @public (undocumented)
@@ -3697,7 +3711,7 @@ export const DEFAULT_CHUNK_FLUSH_BYTES = 512;
 export const DEFAULT_CHUNK_LINGER_MS = 20;
 
 // @public (undocumented)
-export const DEFAULT_DECODE_LIMITS: DecodeLimits;
+const DEFAULT_DECODE_LIMITS: DecodeLimits;
 
 // @public (undocumented)
 const DEFAULT_FORK_MUTATIONS_TOPIC = "fork.mutations";
@@ -3711,6 +3725,18 @@ export const DEFAULT_KEY_NAMESPACE = "agent.keys";
 // @public (undocumented)
 const DEFAULT_KV_MUTATIONS_TOPIC = "kv.mutations";
 
+// @public
+export const DEFAULT_LINGER_MS = 5;
+
+// @public
+export const DEFAULT_MAX_BYTES: number;
+
+// @public
+export const DEFAULT_MAX_RECORDS = 512;
+
+// @public (undocumented)
+export const DEFAULT_MEMORY_TOPIC_TTL_MS: number;
+
 // @public (undocumented)
 const DEFAULT_NAMESPACE = "default";
 
@@ -3719,9 +3745,6 @@ export const DEFAULT_OUTCOME_WAIT_MS = 30000;
 
 // @public (undocumented)
 const DEFAULT_RECALL_LIMIT = 100;
-
-// @public (undocumented)
-export const DEFAULT_RETRY_POLICY: RetryPolicy;
 
 // @public (undocumented)
 const DEFAULT_RUN_MUTATIONS_TOPIC = "run.mutations";
@@ -3762,6 +3785,7 @@ interface DefineRoleReq {
     readonly mutationId?: string;
     // (undocumented)
     readonly role: Role;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -3779,6 +3803,7 @@ interface DeleteRoleReq {
     readonly mutationId?: string;
     // (undocumented)
     readonly name: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -3800,6 +3825,14 @@ interface DestinationBlock {
 
 // @public (undocumented)
 type DestinationBlockCode = "decode" | "schema" | "projection" | "value" | "size" | "retention_gap" | "prepared_attempt" | "backend_generation" | "backend_unavailable" | "table_identity" | "catalog_outcome_unknown" | "source_incarnation" | "authorization";
+
+// @public (undocumented)
+export interface DestinationCaps {
+    // (undocumented)
+    readonly available: boolean;
+    // (undocumented)
+    readonly consistency: CheckpointReadConsistency;
+}
 
 // @public (undocumented)
 interface DestinationCapsView {
@@ -4042,8 +4075,6 @@ const destinationRetentionGapPath: (id: DestinationId) => string;
 
 // @public (undocumented)
 export class Destinations {
-    // Warning: (ae-forgotten-export) The symbol "ManagedTransport" needs to be exported by the entry point full.d.ts
-    constructor(transport: ManagedTransport, capabilities: () => Promise<Capabilities>);
     // (undocumented)
     acceptRetentionGap(expectedGlobalStateRevision: bigint, destinationId: DestinationId, destinationGeneration: bigint, expectedCheckpointRevision: bigint, nextOffset: bigint, supervisorAssertion: SupervisorActorAssertion): Promise<CheckpointMutationResult>;
     // (undocumented)
@@ -4062,6 +4093,7 @@ export class Destinations {
     list(consistency: CheckpointReadConsistency, filter?: DestinationListFilter, after?: DestinationId, limit?: number): Promise<DestinationCheckpointPage>;
     // (undocumented)
     mutate(expectedGlobalStateRevision: bigint, mutation: PublicCheckpointMutation, supervisorAssertion?: SupervisorActorAssertion): Promise<CheckpointMutationResult>;
+    mutateWithSupervisorAssertion(expectedGlobalStateRevision: bigint, mutation: PublicCheckpointMutation, supervisorAssertion: SupervisorActorAssertion): Promise<CheckpointMutationResult>;
     // (undocumented)
     observePartitionLifecycle(expectedGlobalStateRevision: bigint, destinationId: DestinationId, destinationGeneration: bigint, expectedCheckpointRevision: bigint, partitionId: number): Promise<CheckpointMutationResult>;
     // (undocumented)
@@ -4117,6 +4149,14 @@ interface DestinationView {
 }
 
 // @public (undocumented)
+export const Digest32: {
+    readonly BYTES: 32;
+};
+
+// @public (undocumented)
+export type Digest32 = Uint8Array;
+
+// @public (undocumented)
 type Dir = "asc" | "desc";
 
 // @public (undocumented)
@@ -4147,6 +4187,9 @@ export function edgeDenialCode(denial: EdgeDenial): ResultCode;
 
 // @public (undocumented)
 export type EdgeDir = "out" | "in" | "both";
+
+// @public (undocumented)
+export function edgeDirIsOut(dir: EdgeDir): boolean;
 
 // @public (undocumented)
 export interface EdgeExtract {
@@ -4184,7 +4227,7 @@ export interface Embedder {
 }
 
 // @public (undocumented)
-export function emptyGather(): Gather;
+export function enabledBackends(capabilities: Capabilities): readonly BackendDescriptor[];
 
 // @public (undocumented)
 function encodeAcceptedOperationJson(value: AcceptedOperationView): string;
@@ -4193,7 +4236,7 @@ function encodeAcceptedOperationJson(value: AcceptedOperationView): string;
 function encodeAgentCancel(cancel: AgentCancel): Map<string, unknown>;
 
 // @public (undocumented)
-function encodeAgentCard(card: AgentCard): Map<string, unknown>;
+function encodeAgentCard(card: AgentCard_2): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeAgentDeadLetter(letter: AgentDeadLetter): Map<string, unknown>;
@@ -4298,6 +4341,9 @@ function encodeCapabilityDescriptor(capability: CapabilityDescriptor): Map<strin
 function encodeCasExpect(expect: CasExpect): unknown;
 
 // @public (undocumented)
+function encodeCatalogPosition(position: CatalogPosition): Map<string, unknown>;
+
+// @public (undocumented)
 function encodeChangeRecord(record: ChangeRecord): Map<string, unknown>;
 
 // @public (undocumented)
@@ -4320,6 +4366,9 @@ function encodeClientMetadataList(list: ClientMetadataList): Map<string, unknown
 
 // @public (undocumented)
 function encodeClientMetadataQuery(query: ClientMetadataQuery): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeConsumerFilter(filter: ConsumerFilter): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeContentRef(ref: ContentRef): Map<string, unknown>;
@@ -4373,6 +4422,60 @@ function encodeErrorBodyJson(value: ErrorBody): string;
 function encodeFilter(value: Filter): Map<string, unknown>;
 
 // @public (undocumented)
+function encodeFilterCatalogCommand(command: FilterCatalogCommand): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterCatalogReply(reply: FilterCatalogReply): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterConsumer(consumer: FilterConsumer): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilteredAck(ack: FilteredAck): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilteredPage(page: FilteredPage): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilteredPollRequest(request: FilteredPollRequest): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilteredStart(start: FilteredStart): unknown;
+
+// @public (undocumented)
+function encodeFilterError(error: FilterError): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterExpr(expr: FilterExpr): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterGroupIdentity(identity: FilterGroupIdentity): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterGroupRef(group: FilterGroupRef): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterMutation(mutation: FilterMutation): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterMutationRequest(request: FilterMutationRequest): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterPreviewRequest(request: FilterPreviewRequest): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterRef(filter: FilterRef): unknown;
+
+// @public (undocumented)
+function encodeFilterReply(reply: FilterReply): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterSource(source: FilterSource): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeFilterTestRequest(request: FilterTestRequest): Map<string, unknown>;
+
+// @public (undocumented)
 function encodeFoldSnapshot(snapshot: FoldSnapshot): Map<string, unknown>;
 
 // @public (undocumented)
@@ -4391,7 +4494,7 @@ function encodeForkInfo(info: ForkInfo): Map<string, unknown>;
 const encodeForkInfoJson: (fork: ForkInfo) => string;
 
 // @public (undocumented)
-function encodeForkList(): Map<string, unknown>;
+function encodeForkList(request?: ForkList): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeForkOutcome(outcome: ForkOutcome): unknown;
@@ -4413,6 +4516,15 @@ function encodeForwardedQuery(query: ForwardedQuery): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeGetBindingsReq(req: GetBindingsReq): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeGetFilter(request: GetFilter): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeGetFilterBinding(request: GetFilterBinding): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeGetFilterOperation(request: GetFilterOperation): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeGetProjection(request: GetProjection): Map<string, unknown>;
@@ -4467,6 +4579,9 @@ function encodeGraphUpsert(upsert: GraphUpsert): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeGraphUpsertFrame(upsert: GraphUpsert): Uint8Array;
+
+// @public (undocumented)
+function encodeHeaderScalar(value: HeaderScalar): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeHelloReply(reply: HelloReply): Uint8Array;
@@ -4526,7 +4641,7 @@ function encodeKvMove(move: KvMove): Map<string, unknown>;
 function encodeKvNamespaceInfo(info: KvNamespaceInfo): Map<string, unknown>;
 
 // @public (undocumented)
-function encodeKvNamespaces(): Map<string, unknown>;
+function encodeKvNamespaces(request?: KvNamespaces): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeKvOutcome(outcome: KvOutcome): unknown;
@@ -4551,6 +4666,15 @@ function encodeKvScan(scan: KvScan): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeKvSet(set: KvSet): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeListFilterBindings(request: ListFilterBindings): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeListFilterRevisions(request: ListFilterRevisions): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeListFilters(request: ListFilters): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeListProjections(request: ListProjections): Map<string, unknown>;
@@ -4638,9 +4762,6 @@ const encodeProjectionListJson: (items: readonly ProjectionInfo[]) => string;
 function encodeProjectionRef(value: ProjectionRef): Map<string, unknown>;
 
 // @public (undocumented)
-export function encodeProvenanceHeaders(provenance: Provenance): ReadonlyMap<string, IggyHeaderValue>;
-
-// @public (undocumented)
 function encodePublicCheckpointMutation(value: PublicCheckpointMutation): Map<string, unknown>;
 
 // @public (undocumented)
@@ -4719,6 +4840,9 @@ function encodeRetentionPolicy(policy: RetentionPolicy): Map<string, unknown>;
 function encodeRole(role: Role): Map<string, unknown>;
 
 // @public (undocumented)
+function encodeRoleBinding(binding: RoleBinding): Map<string, unknown>;
+
+// @public (undocumented)
 function encodeRunBudget(budget: RunBudget): Map<string, unknown>;
 
 // @public (undocumented)
@@ -4745,11 +4869,17 @@ function encodeSignature(signature: Signature): Map<string, unknown>;
 // @public (undocumented)
 function encodeSignatureContext(context: SignatureContext): Map<string, unknown>;
 
+// @public
+export function encodeSnapshot(snapshot: FoldSnapshot): Uint8Array;
+
 // @public (undocumented)
 function encodeSnapshotPageJson(value: SnapshotPageView): string;
 
 // @public (undocumented)
 function encodeSourceCut(value: SourceCut): Map<string, unknown>;
+
+// @public (undocumented)
+function encodeSourceGeneration(generation: SourceGeneration): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeSourceIncarnation(value: SourceIncarnation): Map<string, unknown>;
@@ -4800,7 +4930,7 @@ function encodeValueMap(values: ReadonlyMap<string, Value>): Map<string, unknown
 function encodeWhoamiReply(reply: WhoamiReply): Map<string, unknown>;
 
 // @public (undocumented)
-function encodeWhoamiReq(): Map<string, unknown>;
+function encodeWhoamiReq(req?: WhoamiReq): Map<string, unknown>;
 
 // @public (undocumented)
 function encodeWireTopology(topology: WireTopology): Map<string, unknown>;
@@ -4817,12 +4947,6 @@ export interface EntitySchema {
 }
 
 // @public (undocumented)
-export function envelopesToAgUi(envelopes: readonly AgentEnvelope[]): readonly AgUiEvent[];
-
-// @public (undocumented)
-export function envelopeToAgUi(envelope: AgentEnvelope): readonly AgUiEvent[];
-
-// @public (undocumented)
 interface ErrorBody {
     // (undocumented)
     readonly code: ResultCode;
@@ -4833,15 +4957,15 @@ interface ErrorBody {
 }
 
 // @public (undocumented)
-function errorEnvelope(record: RecordId, conversation: WireConversationId, source: AgentId_2, correlation: CorrelationId, body: Uint8Array): AgentEnvelope;
+export function errorEnvelope(record: RecordId, conversation: ConversationId_2, source: AgentId_2, correlation: CorrelationId, body: Uint8Array): AgentEnvelope;
 
 // @public (undocumented)
-export function eventEnvelope(record: RecordId, conversation: WireConversationId, source: AgentId_2, body: Uint8Array): AgentEnvelope;
+export function eventEnvelope(record: RecordId, conversation: ConversationId_2, source: AgentId_2, body: Uint8Array): AgentEnvelope;
 
 // @public
-export class ExactDecimal {
+class ExactDecimal {
     compare(other: ExactDecimal): number;
-    static fromDouble(value: number): ExactDecimal | undefined;
+    static fromF64(value: number): ExactDecimal | undefined;
     // (undocumented)
     static fromInteger(value: bigint): ExactDecimal;
     static parse(text: string): ExactDecimal | undefined;
@@ -4851,6 +4975,9 @@ export class ExactDecimal {
 
 // @public
 export type ExecutionMode = "filtered" | "unfiltered";
+
+// @public (undocumented)
+export function executionModeIsFiltered(mode: ExecutionMode): boolean;
 
 // @public (undocumented)
 function expectArray(value: unknown, context: string): readonly unknown[];
@@ -4895,11 +5022,14 @@ export type FaultPolicy = "stop" | "pass" | "drop";
 // @public (undocumented)
 export type FaultReason = "malformed" | "too_large" | "too_deep" | "missing_schema" | "schema_not_allowed" | "schema_mismatch" | "foreign_codec" | "type_mismatch";
 
+// @public
+export function faultReasonIsForeign(reason: FaultReason): boolean;
+
 // @public (undocumented)
 type Feature = "kv" | "memory" | "projection" | "fork" | "graph" | "query" | "agent" | "workflow" | "destination" | "checkpoint" | "authz" | "kv_lease" | "kv_fence" | "filter" | "unrecognized";
 
 // @public (undocumented)
-const Feature_2: {
+const feature: {
     readonly KV_CAS: bigint;
     readonly READ_YOUR_WRITES: bigint;
     readonly STRONG_CONSISTENCY: bigint;
@@ -4934,6 +5064,46 @@ export interface Feedback {
 
 // @public (undocumented)
 const FENCE = "agdx.fence";
+
+// @public
+export class FencedLeaseClient implements AsyncDisposable {
+    // (undocumented)
+    [Symbol.asyncDispose](): Promise<void>;
+    constructor(transport: ManagedKvTransport);
+    // (undocumented)
+    acquire(operation: PreparedMutation): Promise<Lease>;
+    // (undocumented)
+    casFenced(operation: PreparedMutation): Promise<bigint>;
+    // (undocumented)
+    close(): Promise<void>;
+    // (undocumented)
+    static connectDedicated(connectionString: string): FencedLeaseClient;
+    // (undocumented)
+    get(request: KvGet): Promise<KvEntry | undefined>;
+    // (undocumented)
+    prepareAcquire(request: KvLease): PreparedMutation;
+    // (undocumented)
+    prepareCasFenced(request: KvCasFenced): PreparedMutation;
+    // (undocumented)
+    prepareRelease(request: KvRelease): PreparedMutation;
+    // (undocumented)
+    prepareRenew(request: KvLeaseRenew): PreparedMutation;
+    // (undocumented)
+    release(operation: PreparedMutation): Promise<boolean>;
+    // (undocumented)
+    renew(operation: PreparedMutation): Promise<Lease>;
+    // (undocumented)
+    withAttemptTimeout(milliseconds: number): this;
+}
+
+// @public
+export class FenceViolationError extends LaserError {
+    constructor(stale: bigint, current: bigint);
+    // (undocumented)
+    readonly current: bigint;
+    // (undocumented)
+    readonly stale: bigint;
+}
 
 // @public (undocumented)
 const field: {
@@ -4977,13 +5147,15 @@ export class FieldPath {
     readonly segments: readonly PathSegment[];
     // (undocumented)
     toString(): string;
+    // (undocumented)
+    static tryParse(text: string): FieldPath | undefined;
 }
 
 // @public (undocumented)
-type FieldType = "text" | "int" | "float" | "bool";
+export type FieldType = "text" | "int" | "float" | "bool";
 
 // @public (undocumented)
-interface FieldValue {
+export interface FieldValue {
     // (undocumented)
     readonly fieldId: number;
     // (undocumented)
@@ -5000,8 +5172,6 @@ export class FileStore implements StateStore {
     delete(key: string): Promise<void>;
     // (undocumented)
     get(key: string): Promise<Uint8Array | undefined>;
-    // (undocumented)
-    readonly root: string;
     // (undocumented)
     set(key: string, value: Uint8Array): Promise<void>;
 }
@@ -5049,7 +5219,7 @@ const FILTER_VALIDATE_PATH = "/agdx/filters/validate";
 export function filterAll(filters: readonly Filter[]): Filter;
 
 // @public
-interface FilterAnnounce {
+export interface FilterAnnounce {
     // (undocumented)
     readonly codecs: readonly FilterCodec[];
     // (undocumented)
@@ -5057,7 +5227,10 @@ interface FilterAnnounce {
 }
 
 // @public
-function filterAnnounceEvaluates(announce: FilterAnnounce, evaluatorVersion: number, codec: FilterCodec): boolean;
+export function filterAnnounceEvaluates(announce: FilterAnnounce, evaluatorVersion: number, codec: FilterCodec): boolean;
+
+// @public
+export function filterAnnounceServed(): FilterAnnounce;
 
 // @public (undocumented)
 export function filterAny(filters: readonly Filter[]): Filter;
@@ -5080,7 +5253,7 @@ export interface FilterBinding {
 }
 
 // @public (undocumented)
-export interface FilterBindingPage {
+interface FilterBindingPage {
     // (undocumented)
     readonly items: readonly FilterBinding[];
     // (undocumented)
@@ -5094,16 +5267,16 @@ export interface FilterBindingPage {
 // @public (undocumented)
 function filterBindingPath(stream: string, topic: string, group: string): string;
 
-// @public (undocumented)
-export function filterCandidatesByPrincipal(candidates: readonly RegisteredCard[], required: PrincipalId, principalFor: (agent: AgentId) => PrincipalId | undefined): readonly RegisteredCard[];
-
 // @public
-export interface FilterCapabilities {
+export interface FilterCaps {
     readonly catalog: boolean;
     readonly evaluation?: FilterAnnounce;
     readonly groupPolicyReads: boolean;
     readonly native: boolean;
 }
+
+// @public
+export function filterCapsEvaluates(filters: FilterCaps, evaluatorVersion: number, codec: FilterCodec): boolean;
 
 // @public (undocumented)
 interface FilterCapsView {
@@ -5125,11 +5298,76 @@ interface FilterCapsView {
     readonly primaryRouting: boolean;
 }
 
+// @public (undocumented)
+interface FilterCatalogCommand {
+    // (undocumented)
+    readonly actorUserId: number;
+    readonly filterId?: number;
+    readonly grants?: readonly Grant[];
+    // (undocumented)
+    readonly identity?: FilterGroupIdentity;
+    // (undocumented)
+    readonly limits?: FilterCatalogLimits;
+    // (undocumented)
+    readonly mutation: FilterMutation;
+    // (undocumented)
+    readonly operationId: bigint;
+}
+
+// @public
+interface FilterCatalogLimits {
+    readonly maxCatalogBytes: bigint;
+    // (undocumented)
+    readonly maxDefinitions: number;
+    // (undocumented)
+    readonly maxGroupIdentities: number;
+    // (undocumented)
+    readonly maxRevisions: number;
+    // (undocumented)
+    readonly maxTombstones: number;
+}
+
+// @public (undocumented)
+type FilterCatalogOutcome = {
+    readonly kind: "filter";
+    readonly detail: FilterDetail;
+} | {
+    readonly kind: "filters";
+    readonly page: FilterPage;
+} | {
+    readonly kind: "revisions";
+    readonly page: FilterRevisionPage;
+} | {
+    readonly kind: "binding";
+    readonly binding: FilterBinding;
+} | {
+    readonly kind: "bindings";
+    readonly page: FilterBindingPage;
+} | {
+    readonly kind: "mutation";
+    readonly outcome: FilterMutationOutcome;
+} | {
+    readonly kind: "policy";
+    readonly policy: ResolvedFilterPolicy;
+} | {
+    readonly kind: "unbound";
+    readonly unbound: GroupPolicyUnbound;
+};
+
+// @public (undocumented)
+type FilterCatalogReply = {
+    readonly kind: "ok";
+    readonly outcome: FilterCatalogOutcome;
+} | {
+    readonly kind: "err";
+    readonly error: FilterError;
+};
+
 // @public
 export type FilterCodec = "json" | "cbor" | "avro" | "protobuf" | "headers_only" | "unknown";
 
 // @public
-export type FilterConsumer = {
+type FilterConsumer = {
     readonly kind: "group_id";
     readonly id: bigint;
 } | {
@@ -5141,13 +5379,103 @@ export type FilterConsumer = {
 };
 
 // @public (undocumented)
-export interface FilterDetail {
+function filterConsumerIsGroup(consumer: FilterConsumer): boolean;
+
+// @public (undocumented)
+interface FilterDetail {
     // (undocumented)
     readonly bindings: readonly FilterBinding[];
     // (undocumented)
     readonly latest: FilterRevisionInfo;
     // (undocumented)
     readonly summary: FilterSummary;
+}
+
+// @public (undocumented)
+interface FilteredAck {
+    // (undocumented)
+    readonly consumer: FilterConsumer;
+    readonly digest?: Uint8Array;
+    // (undocumented)
+    readonly generation: SourceGeneration;
+    // (undocumented)
+    readonly groupId?: bigint;
+    // (undocumented)
+    readonly mode: ExecutionMode;
+    // (undocumented)
+    readonly offset: bigint;
+    // (undocumented)
+    readonly partitionId: number;
+    // (undocumented)
+    readonly policyGeneration: bigint;
+    // (undocumented)
+    readonly source: FilterSource;
+    // (undocumented)
+    readonly v: number;
+}
+
+// @public
+interface FilteredPage {
+    // (undocumented)
+    readonly evaluationLimits?: {
+        readonly maxPayloadBytes: number;
+        readonly maxDepth: number;
+    };
+    // (undocumented)
+    readonly examined: number;
+    // (undocumented)
+    readonly fault?: RecordFault;
+    // (undocumented)
+    readonly frontier: bigint;
+    // (undocumented)
+    readonly generation: SourceGeneration;
+    // (undocumented)
+    readonly matched: number;
+    // (undocumented)
+    readonly nextScanOffset?: bigint;
+    // (undocumented)
+    readonly partitionId: number;
+    // (undocumented)
+    readonly policy: AppliedPolicy;
+    // (undocumented)
+    readonly readMode: ReadMode;
+    // (undocumented)
+    readonly records: Uint8Array;
+    // (undocumented)
+    readonly safeAckOffset?: bigint;
+    // (undocumented)
+    readonly stop: StopReason;
+    // (undocumented)
+    readonly unevaluated: readonly bigint[];
+    // (undocumented)
+    readonly v: number;
+}
+
+// @public
+function filteredPageNextStart(page: FilteredPage, original: FilteredStart): FilteredStart;
+
+// @public (undocumented)
+interface FilteredPollRequest {
+    // (undocumented)
+    readonly consumer: FilterConsumer;
+    // (undocumented)
+    readonly count: number;
+    // (undocumented)
+    readonly filter: FilterRef;
+    readonly maxExamined?: number;
+    // (undocumented)
+    readonly maxReplyBytes: number;
+    readonly minCatalogPosition?: CatalogPosition;
+    // (undocumented)
+    readonly partitionId: number;
+    // (undocumented)
+    readonly readMode: ReadMode;
+    // (undocumented)
+    readonly source: FilterSource;
+    // (undocumented)
+    readonly start: FilteredStart;
+    // (undocumented)
+    readonly v: number;
 }
 
 // @public
@@ -5218,6 +5546,12 @@ export interface FilterError {
     readonly reason: FilterErrorReason;
 }
 
+// @public
+export function filterErrorCheckVersion(v: number): FilterError | undefined;
+
+// @public (undocumented)
+export function filterErrorInvalid(error: InvalidError): FilterError;
+
 // @public (undocumented)
 export type FilterErrorReason = "invalid_request" | "unsupported" | "version_skew" | "not_found" | "conflict" | "source_changed" | "membership_stale" | "not_primary" | "catalog_unavailable" | "revision_disabled" | "too_large" | "unauthenticated" | "forbidden" | "unavailable" | "capacity_exhausted" | "backend"
 /** A reason this build does not know. The error's `code` still classifies it. */
@@ -5230,8 +5564,6 @@ export class FilterExecutionError extends LaserError {
     });
     // (undocumented)
     readonly detail: FilterError;
-    // (undocumented)
-    get reason(): FilterErrorReason;
 }
 
 // @public (undocumented)
@@ -5243,6 +5575,22 @@ export interface FilterExplanation {
     // (undocumented)
     readonly verdict: FilterVerdict;
 }
+
+// @public
+export const FilterExpr: {
+    readonly all: (children: readonly FilterExpr[]) => FilterExpr;
+    readonly any: (children: readonly FilterExpr[]) => FilterExpr;
+    readonly negate: (child: FilterExpr) => FilterExpr;
+    readonly pred: (fieldName: string, op: CmpOp, value: FilterLiteral) => FilterExpr;
+    readonly predAs: (fieldName: string, op: CmpOp, value: FilterLiteral, coerce: Coerce) => FilterExpr;
+    readonly present: (path: string) => FilterExpr;
+    readonly absent: (path: string) => FilterExpr;
+    readonly tryPresent: (path: string) => FilterExpr | undefined;
+    readonly tryAbsent: (path: string) => FilterExpr | undefined;
+    readonly header: (key: string, op: CmpOp, value: FilterLiteral) => FilterExpr;
+    readonly text: (fieldName: string, kind: TextMatch, pattern: string, caseInsensitive?: boolean) => FilterExpr;
+    readonly headerText: (key: string, kind: TextMatch, pattern: string, caseInsensitive?: boolean) => FilterExpr;
+};
 
 // @public
 export type FilterExpr = {
@@ -5278,18 +5626,24 @@ export type FilterExpr = {
 };
 
 // @public
-export const FilterExpr: {
-    readonly all: (children: readonly FilterExpr[]) => FilterExpr;
-    readonly any: (children: readonly FilterExpr[]) => FilterExpr;
-    readonly negate: (child: FilterExpr) => FilterExpr;
-    readonly pred: (fieldName: string, op: CmpOp, value: FilterLiteral) => FilterExpr;
-    readonly predAs: (fieldName: string, op: CmpOp, value: FilterLiteral, coerce: Coerce) => FilterExpr;
-    readonly present: (path: string) => FilterExpr;
-    readonly absent: (path: string) => FilterExpr;
-    readonly header: (key: string, op: CmpOp, value: FilterLiteral) => FilterExpr;
-    readonly text: (fieldName: string, kind: TextMatch, pattern: string, caseInsensitive?: boolean) => FilterExpr;
-    readonly headerText: (key: string, kind: TextMatch, pattern: string, caseInsensitive?: boolean) => FilterExpr;
-};
+export function filterExprCaseInsensitive(expr: FilterExpr): FilterExpr;
+
+// @public (undocumented)
+export function filterExprReadsHeaders(expr: FilterExpr): boolean;
+
+// @public (undocumented)
+export function filterExprReadsPayload(expr: FilterExpr): boolean;
+
+// @public
+export class FilterFaultError extends LaserError {
+    constructor(partitionId: number, offset: bigint, reason?: FaultReason | undefined);
+    // (undocumented)
+    readonly offset: bigint;
+    // (undocumented)
+    readonly partitionId: number;
+    // (undocumented)
+    readonly reason?: FaultReason | undefined;
+}
 
 // @public (undocumented)
 export interface FilterGroupIdentity {
@@ -5324,16 +5678,13 @@ export interface FilterHeader {
 }
 
 // @public
-export type FilterLiteral = string | number | bigint | boolean | null | TypedValue | readonly FilterLiteral[];
+type FilterLiteral = string | number | bigint | boolean | null | TypedValue | readonly FilterLiteral[];
 
-// Warning: (ae-forgotten-export) The symbol "FilterMutationRequest" needs to be exported by the entry point full.d.ts
-// Warning: (ae-forgotten-export) The symbol "FilterCatalogReply" needs to be exported by the entry point full.d.ts
-//
 // @public (undocumented)
 const FilterMutateCommand: ManagedCommand<FilterMutationRequest, FilterCatalogReply>;
 
 // @public (undocumented)
-export type FilterMutation = {
+type FilterMutation = {
     readonly kind: "set_revision_enabled";
     readonly filterId: number;
     readonly revision: number;
@@ -5376,7 +5727,7 @@ export type FilterMutation = {
 };
 
 // @public (undocumented)
-export interface FilterMutationOutcome {
+interface FilterMutationOutcome {
     readonly catalogPosition?: CatalogPosition;
     // (undocumented)
     readonly operationId: bigint;
@@ -5387,7 +5738,17 @@ export interface FilterMutationOutcome {
 }
 
 // @public (undocumented)
-export type FilterMutationResult = {
+interface FilterMutationRequest {
+    // (undocumented)
+    readonly mutation: FilterMutation;
+    // (undocumented)
+    readonly operationId: bigint;
+    // (undocumented)
+    readonly v: number;
+}
+
+// @public (undocumented)
+type FilterMutationResult = {
     readonly kind: "revision_state";
     readonly filterId: number;
     readonly revision: number;
@@ -5416,7 +5777,7 @@ export type FilterMutationResult = {
 };
 
 // @public (undocumented)
-export type FilterMutationStatus = {
+type FilterMutationStatus = {
     readonly kind: "pending";
 } | {
     readonly kind: "applied";
@@ -5429,8 +5790,6 @@ export type FilterMutationStatus = {
 // @public (undocumented)
 export function filterNegate(filter: Filter): Filter;
 
-// Warning: (ae-forgotten-export) The symbol "GetFilterOperation" needs to be exported by the entry point full.d.ts
-//
 // @public (undocumented)
 const FilterOperationCommand: ManagedCommand<GetFilterOperation, FilterCatalogReply>;
 
@@ -5438,7 +5797,34 @@ const FilterOperationCommand: ManagedCommand<GetFilterOperation, FilterCatalogRe
 function filterOperationPath(operationId: bigint): string;
 
 // @public (undocumented)
-export interface FilterPage {
+type FilterOutcome = {
+    readonly kind: "page";
+    readonly page: FilteredPage;
+} | {
+    readonly kind: "acknowledged";
+    readonly receipt: AckReceipt;
+} | {
+    readonly kind: "preview";
+    readonly preview: FilterPreview;
+} | {
+    readonly kind: "tested";
+    readonly result: FilterTestResult;
+} | {
+    readonly kind: "validated";
+    readonly validation: FilterValidation;
+};
+
+// @public
+export class FilterOversizedRecordError extends LaserError {
+    constructor(partitionId: number, offset: bigint);
+    // (undocumented)
+    readonly offset: bigint;
+    // (undocumented)
+    readonly partitionId: number;
+}
+
+// @public (undocumented)
+interface FilterPage {
     // (undocumented)
     readonly items: readonly FilterSummary[];
     // (undocumented)
@@ -5451,6 +5837,16 @@ export interface FilterPage {
 
 // @public (undocumented)
 function filterPath(id: number): string;
+
+// @public (undocumented)
+type FilterPolicyRef = {
+    readonly kind: "revision";
+    readonly filterId: number;
+    readonly revision: number;
+} | {
+    readonly kind: "binding";
+    readonly identity: FilterGroupIdentity;
+};
 
 // @public (undocumented)
 export function filterPred(fieldName: string, op: CmpOp, value: TypedValue): Filter;
@@ -5481,9 +5877,6 @@ export interface FilterPreview {
     readonly v: number;
 }
 
-// Warning: (ae-forgotten-export) The symbol "FilterPreviewRequest" needs to be exported by the entry point full.d.ts
-// Warning: (ae-forgotten-export) The symbol "FilterReply" needs to be exported by the entry point full.d.ts
-//
 // @public (undocumented)
 const FilterPreviewCommand: ManagedCommand<FilterPreviewRequest, FilterReply>;
 
@@ -5499,16 +5892,39 @@ export interface FilterPreviewOptions {
     readonly maxRecords?: number;
 }
 
+// @public (undocumented)
+interface FilterPreviewRequest {
+    // (undocumented)
+    readonly explain: boolean;
+    // (undocumented)
+    readonly filter: FilterRef;
+    // (undocumented)
+    readonly fromOffset: bigint;
+    // (undocumented)
+    readonly maxExamined: number;
+    // (undocumented)
+    readonly maxRecords: number;
+    // (undocumented)
+    readonly partitionId: number;
+    // (undocumented)
+    readonly source: FilterSource;
+    // (undocumented)
+    readonly v: number;
+}
+
+// @public
+export function filterReason(error: unknown): FilterErrorReason | undefined;
+
 // @public
 export interface FilterRecord {
     // (undocumented)
-    readonly headers: readonly FilterHeader[];
+    readonly headers: readonly HeaderRef[];
     // (undocumented)
     readonly payload: Uint8Array;
 }
 
 // @public
-export type FilterRef = {
+type FilterRef = {
     readonly kind: "inline";
     readonly filter: ConsumerFilter;
 } | {
@@ -5524,6 +5940,15 @@ export type FilterRef = {
 */
 | {
     readonly kind: "group";
+};
+
+// @public (undocumented)
+type FilterReply = {
+    readonly kind: "ok";
+    readonly outcome: FilterOutcome;
+} | {
+    readonly kind: "err";
+    readonly error: FilterError;
 };
 
 // @public (undocumented)
@@ -5571,7 +5996,7 @@ function filterRevisionsPath(id: number): string;
 const FILTERS_PATH = "/agdx/filters";
 
 // @public
-export interface FilterSource {
+interface FilterSource {
     // (undocumented)
     readonly stream: string;
     // (undocumented)
@@ -5581,23 +6006,8 @@ export interface FilterSource {
 // @public (undocumented)
 export type FilterState = "active" | "archived" | "dropped";
 
-// @public
-export class FilterStopError extends LaserError {
-    constructor(stop: "fault" | "oversized_record", partitionId: number, offset: bigint, faultReason?: FaultReason | undefined);
-    // (undocumented)
-    readonly faultReason?: FaultReason | undefined;
-    // (undocumented)
-    readonly offset: bigint;
-    // (undocumented)
-    readonly partitionId: number;
-    // (undocumented)
-    get reason(): "fault" | "oversized_record";
-    // (undocumented)
-    readonly stop: "fault" | "oversized_record";
-}
-
 // @public (undocumented)
-export interface FilterSummary {
+interface FilterSummary {
     // (undocumented)
     readonly bindings: number;
     // (undocumented)
@@ -5620,10 +6030,20 @@ export interface FilterSummary {
     readonly updatedAtMicros: bigint;
 }
 
-// Warning: (ae-forgotten-export) The symbol "FilterTestRequest" needs to be exported by the entry point full.d.ts
-//
 // @public (undocumented)
 const FilterTestCommand: ManagedCommand<FilterTestRequest, FilterReply>;
+
+// @public (undocumented)
+interface FilterTestRequest {
+    // (undocumented)
+    readonly filter: FilterRef;
+    // (undocumented)
+    readonly headers: readonly FilterHeader[];
+    // (undocumented)
+    readonly payload: Uint8Array;
+    // (undocumented)
+    readonly v: number;
+}
 
 // @public (undocumented)
 export interface FilterTestResult {
@@ -5635,14 +6055,11 @@ export interface FilterTestResult {
     readonly v: number;
 }
 
-// @public
-export type FilterTransport = Pick<LaserTransport, "sendManaged" | "joinConsumerGroup" | "leaveConsumerGroup" | "joinExistingConsumerGroup" | "openNodeConnection" | "clusterNodeCount" | "openCoordinator" | "connectsNodes">;
-
 // @public (undocumented)
 const FilterValidateCommand: ManagedCommand<ConsumerFilter, FilterReply>;
 
 // @public (undocumented)
-export interface FilterValidation {
+interface FilterValidation {
     // (undocumented)
     readonly digest: Uint8Array;
     // (undocumented)
@@ -5663,31 +6080,17 @@ export const FINISH_REASON_ABANDONED = "abandoned";
 export const FINISH_REASON_GAP = "gap";
 
 // @public (undocumented)
-interface FoldSnapshot {
+export interface FoldSnapshot {
     // (undocumented)
     readonly asOf: ReadonlyMap<number, bigint>;
     // (undocumented)
-    readonly conversation: WireConversationId;
+    readonly conversation: ConversationId_2;
     // (undocumented)
     readonly state: Uint8Array;
 }
 
 // @public (undocumented)
-function foldSnapshotResumeOffset(snapshot: FoldSnapshot, partition: number): bigint;
-
-// @public
-export class Fork {
-    // Warning: (ae-forgotten-export) The symbol "ForkBackend" needs to be exported by the entry point full.d.ts
-    constructor(backend: ForkBackend, getCapabilities: () => Promise<Capabilities>, forkId: string);
-    create(): ForkCreateRequest;
-    // (undocumented)
-    readonly forkId: string;
-    // (undocumented)
-    static forks(backend: ForkBackend, getCapabilities: () => Promise<Capabilities>): Promise<readonly ForkInfo[]>;
-    promote(): Promise<number>;
-    putRow(table: string, partitionId: number, offset: bigint): ForkPutRequest;
-    squash(): Promise<boolean>;
-}
+export function foldSnapshotResumeOffset(snapshot: FoldSnapshot, partition: number): bigint;
 
 // @public (undocumented)
 const FORK_OP_VERSION = 1;
@@ -5702,6 +6105,7 @@ interface ForkCreate {
     readonly parent?: string;
     // (undocumented)
     readonly tables: readonly string[];
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -5709,7 +6113,6 @@ const ForkCreateCommand: ManagedCommand<ForkCreate, ForkReply>;
 
 // @public
 export class ForkCreateRequest {
-    constructor(backend: ForkBackend, getCapabilities: () => Promise<Capabilities>, forkId: string);
     continuous(): this;
     parent(parent: string): this;
     send(): Promise<ForkInfo>;
@@ -5721,6 +6124,7 @@ export class ForkCreateRequest {
 interface ForkDelete {
     // (undocumented)
     readonly forkId: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -5766,6 +6170,16 @@ export class ForkExecutionError extends LaserError {
     readonly detail: unknown;
 }
 
+// @public
+export class ForkHandle {
+    create(): ForkCreateRequest;
+    // (undocumented)
+    readonly id: string;
+    promote(): Promise<number>;
+    putRow(table: string, partitionId: number, offset: bigint): ForkPutRequest;
+    squash(): Promise<boolean>;
+}
+
 // @public (undocumented)
 export interface ForkInfo {
     // (undocumented)
@@ -5788,10 +6202,15 @@ export interface ForkInfo {
 export type ForkKind = "severed" | "continuous";
 
 // @public (undocumented)
+interface ForkList {
+    readonly v?: number;
+}
+
+// @public (undocumented)
 const ForkListCommand: ManagedCommand<undefined, ForkReply>;
 
 // @public (undocumented)
-export type ForkOutcome = {
+type ForkOutcome = {
     readonly kind: "created";
     readonly info: ForkInfo;
 } | {
@@ -5818,6 +6237,7 @@ const forkPath: (id: string) => string;
 interface ForkPromote {
     // (undocumented)
     readonly forkId: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -5850,6 +6270,7 @@ interface ForkPut {
     readonly table: string;
     // (undocumented)
     readonly tombstone: boolean;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -5857,8 +6278,7 @@ const ForkPutCommand: ManagedCommand<ForkPut, ForkReply>;
 
 // @public
 export class ForkPutRequest {
-    constructor(backend: ForkBackend, getCapabilities: () => Promise<Capabilities>, forkId: string, table: string, partitionId: number, offset: bigint);
-    embedding(embedding: string): this;
+    embedding(embedding: Iterable<number>): this;
     field(name: string, value: string): this;
     metadata(name: string, value: string): this;
     payload(payload: Uint8Array): this;
@@ -5923,10 +6343,7 @@ interface ForwardedQuery {
     readonly userId: number;
 }
 
-// @public (undocumented)
-export const FULL_REPLAY: ReplayBound;
-
-// @public (undocumented)
+// @public
 export function fuseReciprocalRank(signals: readonly (readonly MemoryItem[])[], limit: number): readonly MemoryItem[];
 
 // @public
@@ -5961,17 +6378,40 @@ const GetBindingsCommand: ManagedCommand<GetBindingsReq, AuthzReply>;
 interface GetBindingsReq {
     // (undocumented)
     readonly userId: number;
+    readonly v?: number;
 }
 
-// Warning: (ae-forgotten-export) The symbol "GetFilterBinding" needs to be exported by the entry point full.d.ts
-//
+// @public (undocumented)
+interface GetFilter {
+    // (undocumented)
+    readonly filterId: number;
+    // (undocumented)
+    readonly v: number;
+}
+
+// @public (undocumented)
+interface GetFilterBinding {
+    // (undocumented)
+    readonly group: FilterGroupRef;
+    // (undocumented)
+    readonly identity?: FilterGroupIdentity;
+    // (undocumented)
+    readonly v: number;
+}
+
 // @public (undocumented)
 const GetFilterBindingCommand: ManagedCommand<GetFilterBinding, FilterCatalogReply>;
 
-// Warning: (ae-forgotten-export) The symbol "GetFilter" needs to be exported by the entry point full.d.ts
-//
 // @public (undocumented)
 const GetFilterCommand: ManagedCommand<GetFilter, FilterCatalogReply>;
+
+// @public (undocumented)
+interface GetFilterOperation {
+    // (undocumented)
+    readonly operationId: bigint;
+    // (undocumented)
+    readonly v: number;
+}
 
 // @public (undocumented)
 interface GetProjection {
@@ -5991,6 +6431,7 @@ const GetRoleCommand: ManagedCommand<GetRoleReq, AuthzReply>;
 interface GetRoleReq {
     // (undocumented)
     readonly name: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -6003,6 +6444,19 @@ interface GetSchema {
 
 // @public (undocumented)
 const GetSchemaCommand: ManagedCommand<GetSchema, BrowseReply>;
+
+// @public
+type GlobToken = {
+    readonly kind: "run";
+} | {
+    readonly kind: "one";
+} | {
+    readonly kind: "literal";
+    readonly value: string;
+};
+
+// @public (undocumented)
+function globTokens(pattern: string): GlobToken[] | undefined;
 
 // @public (undocumented)
 export interface GovernedAction {
@@ -6048,14 +6502,11 @@ export const GovernorMode: {
 export type GovernorMode = (typeof GovernorMode)[keyof typeof GovernorMode];
 
 // @public (undocumented)
-export class GovernorState {
-    constructor(governor: ActionGovernor, mode: GovernorMode, nowMicros?: () => bigint, retention?: Partial<GovernorRetention>);
+export interface GovernorRetention {
     // (undocumented)
-    counters(): ActionCounters;
+    readonly capacity: number;
     // (undocumented)
-    govern(action: Omit<GovernedAction, "counters">, emit: (evidence: PolicyEvidence) => Promise<void>): Promise<Uint8Array>;
-    // (undocumented)
-    readonly mode: GovernorMode;
+    readonly idleTtlMs: number;
 }
 
 // @public (undocumented)
@@ -6105,10 +6556,13 @@ export interface GraphEdge {
 export function graphEdgeRelate(from: GraphNode, edgeType: string, to: GraphNode): GraphEdge;
 
 // @public (undocumented)
+export function graphEdgeValid(edge: GraphEdge, from?: bigint, to?: bigint): GraphEdge;
+
+// @public (undocumented)
 export function graphEdgeValidAt(edge: GraphEdge, at: bigint): boolean;
 
 // @public (undocumented)
-export type GraphError = {
+type GraphError = {
     readonly kind: "unsupported";
     readonly message: string;
 } | {
@@ -6152,8 +6606,6 @@ export class GraphExecutionError extends LaserError {
 
 // @public
 export class GraphHandle {
-    // Warning: (ae-forgotten-export) The symbol "GraphBackend" needs to be exported by the entry point full.d.ts
-    constructor(backend: GraphBackend, getCapabilities: () => Promise<Capabilities>, name: string, nowMicros?: () => bigint);
     asOf(micros: bigint): this;
     both(edgeType: string): this;
     conversation(conversationId: string): this;
@@ -6279,10 +6731,13 @@ export interface GraphResult {
 export type GraphReturn = "nodes" | "edges" | "paths" | "triplets";
 
 // @public (undocumented)
+export function graphReturnIsNodes(value: GraphReturn): boolean;
+
+// @public (undocumented)
 const GRAPHS_PATH = "/agdx/graphs";
 
 // @public (undocumented)
-export type GraphStart = {
+type GraphStart = {
     readonly kind: "ids";
     readonly ids: readonly NodeId[];
 } | {
@@ -6317,19 +6772,28 @@ export class GroupFilter {
     preview(partitionId: number, options?: FilterPreviewOptions): Promise<FilterPreview>;
     release(): Promise<FilterBinding>;
     revise(expectedRevision: number, filter: ConsumerFilter): Promise<FilterRevisionRef>;
-    revisions(options?: CatalogPageOptions): Promise<FilterRevisionPage>;
+    revisions(page?: number, pageSize?: number): Promise<FilterRevisionPage>;
     setRevisionEnabled(revision: number, enabled: boolean): Promise<void>;
     test(payload: Uint8Array | string, headers?: readonly FilterHeader[]): Promise<FilterTestResult>;
 }
 
 // @public
-export type GroupTarget = {
-    readonly kind: "name";
-    readonly name: string;
+export type GroupFilterSpec = {
+    readonly kind: "definition";
+    readonly filter: ConsumerFilter;
 } | {
-    readonly kind: "id";
-    readonly id: bigint;
+    readonly kind: "revision";
+    readonly filterId: number;
+    readonly revision: number;
 };
+
+// @public
+interface GroupPolicyUnbound {
+    // (undocumented)
+    readonly identity: FilterGroupIdentity;
+    // (undocumented)
+    readonly policyGeneration: bigint;
+}
 
 // @public (undocumented)
 export class HandlerConfigError extends LaserError {
@@ -6346,14 +6810,6 @@ export class HandlerError extends LaserError {
 }
 
 // @public (undocumented)
-export type HandlerResult = {
-    readonly kind: "ok";
-} | {
-    readonly kind: "error";
-    readonly error: LaserError;
-};
-
-// @public (undocumented)
 const HEADER_FRAMING_BYTES = 9;
 
 // @public (undocumented)
@@ -6361,6 +6817,13 @@ const HEADER_SOFT_CAP = 1024;
 
 // @public (undocumented)
 const HEADER_VALUE_MAX = 255;
+
+// @public
+export type HeaderNeed =
+/** No header is read. */
+"none"
+/** Only `agdx.ct`, to keep a record in another codec out of the decoder. */
+| "content_type" | "all";
 
 // @public (undocumented)
 export interface HeaderPredicate {
@@ -6371,6 +6834,18 @@ export interface HeaderPredicate {
     // (undocumented)
     readonly value: TypedValue;
 }
+
+// @public
+export interface HeaderRef {
+    // (undocumented)
+    readonly key: string;
+    // (undocumented)
+    readonly value: HeaderValueRef;
+}
+
+// @public
+type Headers_2 = ReadonlyMap<string, HeaderValue>;
+export { Headers_2 as Headers }
 
 // @public
 export type HeaderScalar = {
@@ -6393,26 +6868,95 @@ export type HeaderScalar = {
     readonly value: Uint8Array;
 };
 
-// @public (undocumented)
-export const HeaderValue: {
-    readonly string: (value: string) => IggyHeaderValue;
-    readonly bool: (value: boolean) => IggyHeaderValue;
-    readonly int8: (value: number) => IggyHeaderValue;
-    readonly int16: (value: number) => IggyHeaderValue;
-    readonly int32: (value: number) => IggyHeaderValue;
-    readonly int64: (value: bigint) => IggyHeaderValue;
-    readonly int128: (value: Uint8Array) => IggyHeaderValue;
-    readonly uint8: (value: number) => IggyHeaderValue;
-    readonly uint16: (value: number) => IggyHeaderValue;
-    readonly uint32: (value: number) => IggyHeaderValue;
-    readonly uint64: (value: bigint) => IggyHeaderValue;
-    readonly uint128: (value: Uint8Array) => IggyHeaderValue;
-    readonly float: (value: number) => IggyHeaderValue;
-    readonly double: (value: number) => IggyHeaderValue;
+// @public
+export type HeaderValue = {
+    readonly kind: "raw";
+    readonly value: Uint8Array;
+} | {
+    readonly kind: "string";
+    readonly value: string;
+} | {
+    readonly kind: "bool";
+    readonly value: boolean;
+} | {
+    readonly kind: "int8";
+    readonly value: number;
+} | {
+    readonly kind: "int16";
+    readonly value: number;
+} | {
+    readonly kind: "int32";
+    readonly value: number;
+} | {
+    readonly kind: "int64";
+    readonly value: bigint;
+} | {
+    readonly kind: "int128";
+    readonly value: Uint8Array;
+} | {
+    readonly kind: "uint8";
+    readonly value: number;
+} | {
+    readonly kind: "uint16";
+    readonly value: number;
+} | {
+    readonly kind: "uint32";
+    readonly value: number;
+} | {
+    readonly kind: "uint64";
+    readonly value: bigint;
+} | {
+    readonly kind: "uint128";
+    readonly value: Uint8Array;
+} | {
+    readonly kind: "float";
+    readonly value: number;
+} | {
+    readonly kind: "double";
+    readonly value: number;
 };
 
 // @public (undocumented)
-type Health = {
+export const HeaderValue: {
+    readonly string: (value: string) => HeaderValue;
+    readonly bool: (value: boolean) => HeaderValue;
+    readonly int8: (value: number) => HeaderValue;
+    readonly int16: (value: number) => HeaderValue;
+    readonly int32: (value: number) => HeaderValue;
+    readonly int64: (value: bigint) => HeaderValue;
+    readonly int128: (value: Uint8Array) => HeaderValue;
+    readonly uint8: (value: number) => HeaderValue;
+    readonly uint16: (value: number) => HeaderValue;
+    readonly uint32: (value: number) => HeaderValue;
+    readonly uint64: (value: bigint) => HeaderValue;
+    readonly uint128: (value: Uint8Array) => HeaderValue;
+    readonly float: (value: number) => HeaderValue;
+    readonly double: (value: number) => HeaderValue;
+};
+
+// @public
+export type HeaderValueRef = {
+    readonly kind: "bool";
+    readonly value: boolean;
+} | {
+    readonly kind: "int";
+    readonly value: bigint;
+} | {
+    readonly kind: "uint";
+    readonly value: bigint;
+} | {
+    readonly kind: "float";
+    readonly value: number;
+} | {
+    readonly kind: "string";
+    readonly value: string;
+} | {
+    readonly kind: "raw";
+    readonly value: Uint8Array;
+};
+
+// @public (undocumented)
+export type Health = {
     readonly kind: "known";
     readonly name: keyof typeof HealthName;
 } | {
@@ -6421,10 +6965,10 @@ type Health = {
 };
 
 // @public (undocumented)
-function healthCode(value: Health): number;
+export function healthCode(value: Health): number;
 
 // @public (undocumented)
-function healthFromCode(code: number): Health;
+export function healthFromCode(code: number): Health;
 
 // @public (undocumented)
 const HealthName: {
@@ -6433,6 +6977,9 @@ const HealthName: {
     readonly Unavailable: 3;
 };
 
+// @public
+export type HelloOutcome = "unknown" | "answered" | "rejected" | "failed";
+
 // @public (undocumented)
 interface HelloReply {
     // (undocumented)
@@ -6440,7 +6987,7 @@ interface HelloReply {
 }
 
 // @public (undocumented)
-export interface Hop {
+interface Hop {
     // (undocumented)
     readonly dir: EdgeDir;
     // (undocumented)
@@ -6505,59 +7052,25 @@ export type IdempotencyKey = string & {
     readonly __brand: "IdempotencyKey";
 };
 
+// @public
+export class IdError extends LaserError {
+    // (undocumented)
+    static empty(): IdError;
+    // (undocumented)
+    static invalidChar(char: string): IdError;
+    // (undocumented)
+    static invalidMessageId(text: string): IdError;
+    // (undocumented)
+    static invalidUlid(text: string): IdError;
+    // (undocumented)
+    static tooLong(got: number, max: number): IdError;
+}
+
 // @public (undocumented)
 const IDX_PREFIX = "agdx.idx.";
 
-// @public (undocumented)
-export type IggyClient = SimpleClient;
-
 // @public
-export type IggyHeaderValue = {
-    readonly kind: "raw";
-    readonly value: Uint8Array;
-} | {
-    readonly kind: "string";
-    readonly value: string;
-} | {
-    readonly kind: "bool";
-    readonly value: boolean;
-} | {
-    readonly kind: "int8";
-    readonly value: number;
-} | {
-    readonly kind: "int16";
-    readonly value: number;
-} | {
-    readonly kind: "int32";
-    readonly value: number;
-} | {
-    readonly kind: "int64";
-    readonly value: bigint;
-} | {
-    readonly kind: "int128";
-    readonly value: Uint8Array;
-} | {
-    readonly kind: "uint8";
-    readonly value: number;
-} | {
-    readonly kind: "uint16";
-    readonly value: number;
-} | {
-    readonly kind: "uint32";
-    readonly value: number;
-} | {
-    readonly kind: "uint64";
-    readonly value: bigint;
-} | {
-    readonly kind: "uint128";
-    readonly value: Uint8Array;
-} | {
-    readonly kind: "float";
-    readonly value: number;
-} | {
-    readonly kind: "double";
-    readonly value: number;
-};
+export function iggyErrorCode(error: unknown): number | undefined;
 
 // @public (undocumented)
 export type InboxRoute = {
@@ -6588,15 +7101,13 @@ export interface IndexSchema {
 }
 
 // @public (undocumented)
-export interface InjectedClientOptions {
+export class IndexSchemaBuilder {
     // (undocumented)
-    readonly capabilities?: Capabilities;
-    // (undocumented)
-    readonly defaultStream?: string;
-    // (undocumented)
-    readonly observer?: LaserObserver;
-    // (undocumented)
-    readonly ownership?: ClientOwnership;
+    build(): IndexSchema;
+    field(name: string): this;
+    fieldAt(name: string, pointer: string): this;
+    inlinePayload(): this;
+    vectorField(pointer: string): this;
 }
 
 // @public (undocumented)
@@ -6622,7 +7133,9 @@ export class IntegrityError extends LaserError {
 // @public (undocumented)
 export class Intent {
     constructor(options: IntentOptions & {
+        readonly intentId?: IntentId;
         readonly digest?: string;
+        readonly atMicros?: bigint;
     });
     // (undocumented)
     readonly atMicros: bigint;
@@ -6650,8 +7163,26 @@ export class Intent {
     validate(): void;
 }
 
-// @public (undocumented)
+// @public
 export class IntentError extends InvalidError {
+    // (undocumented)
+    static decisionIntentMismatch(): IntentError;
+    // (undocumented)
+    static digestMismatch(): IntentError;
+    // (undocumented)
+    static duplicateEligibleVoter(voter: string): IntentError;
+    // (undocumented)
+    static duplicateMandatoryVoter(voter: string): IntentError;
+    // (undocumented)
+    static ineligibleVoter(voter: string): IntentError;
+    // (undocumented)
+    static invalidDeadline(proposed: bigint, deadline: bigint): IntentError;
+    // (undocumented)
+    static invalidThreshold(required: number, eligible: number): IntentError;
+    // (undocumented)
+    static mandatoryVoterNotEligible(voter: string): IntentError;
+    // (undocumented)
+    static noEligibleVoters(): IntentError;
 }
 
 // @public (undocumented)
@@ -6669,8 +7200,6 @@ export class IntentId {
 // @public (undocumented)
 export interface IntentOptions {
     // (undocumented)
-    readonly atMicros?: bigint;
-    // (undocumented)
     readonly body: Uint8Array;
     // (undocumented)
     readonly conversation: ConversationId;
@@ -6678,8 +7207,6 @@ export interface IntentOptions {
     readonly deadlineMicros: bigint;
     // (undocumented)
     readonly eligibleVoters: readonly AgentId[];
-    // (undocumented)
-    readonly intentId?: IntentId;
     // (undocumented)
     readonly mandatoryVoters?: readonly AgentId[];
     // (undocumented)
@@ -6718,25 +7245,99 @@ export class InvalidError extends LaserError {
     readonly context: Readonly<Record<string, unknown>> | undefined;
 }
 
+// @public
+export function isAmbiguousMutation(error: unknown): boolean;
+
+// @public
+export function isBudgetExceeded(error: unknown): boolean;
+
+// @public
+export function isFenceViolation(error: unknown): boolean;
+
 // @public (undocumented)
 function isIdempotentManagedRequest(code: number): boolean;
 
-// @public (undocumented)
-function isRawContentType(value: ContentType): boolean;
+// @public
+export function isLeaseLost(error: unknown): boolean;
+
+// @public
+export function isNoCapableAgent(error: unknown): boolean;
+
+// @public
+export function isNotFound(error: unknown): boolean;
+
+// @public
+export function isNotLeader(error: unknown): boolean;
+
+// @public
+export function isOpenOnly(capabilities: Capabilities): boolean;
+
+// @public
+export function isPermissionDenied(error: unknown): boolean;
+
+// @public
+export function isQuarantined(error: unknown): boolean;
 
 // @public (undocumented)
+export function isRawContentType(value: ContentType): boolean;
+
+// @public (undocumented)
+export function isReady(capabilities: Capabilities): boolean;
+
+// @public
 export function isRetryable(error: LaserError): boolean;
 
+// @public
+export function isStale(error: unknown): boolean;
+
+// @public
+export function isStreamOrTopicNotFound(error: unknown): boolean;
+
+// @public
+export function isUnavailable(error: unknown): boolean;
+
+// @public
+export function isUnsupported(error: unknown): boolean;
+
+// @public
+export function isVersionConflict(error: unknown): boolean;
+
+// @public
+export function isVersionSkew(error: unknown): boolean;
+
+// @public
+export class Json<T = unknown> implements Codec<T> {
+    constructor(decodeValue?: (value: unknown) => T);
+    // (undocumented)
+    readonly contentType: ContentType;
+    // (undocumented)
+    decode(payload: Uint8Array): T;
+    // (undocumented)
+    encode(value: T): Uint8Array;
+}
+
 // @public (undocumented)
-export function jsonCodec<T>(decodeValue: ValueDecoder<T>): Codec<T>;
+export interface JsonRpcError {
+    // (undocumented)
+    readonly code: number;
+    // (undocumented)
+    readonly message: string;
+}
+
+// @public (undocumented)
+export interface JsonRpcRequest {
+    // (undocumented)
+    readonly id?: unknown;
+    // (undocumented)
+    readonly method: string;
+    // (undocumented)
+    readonly params?: unknown;
+}
 
 // @public (undocumented)
 export interface JsonRpcResponse {
     // (undocumented)
-    readonly error?: {
-        readonly code: number;
-        readonly message: string;
-    };
+    readonly error?: JsonRpcError;
     // (undocumented)
     readonly id: unknown;
     // (undocumented)
@@ -6746,7 +7347,7 @@ export interface JsonRpcResponse {
 }
 
 // @public
-export type JsonValue = null | boolean | bigint | number | string | readonly JsonValue[] | ReadonlyMap<string, JsonValue>;
+type JsonValue = null | boolean | bigint | number | string | readonly JsonValue[] | ReadonlyMap<string, JsonValue>;
 
 // @public (undocumented)
 const KEY_ID_BYTES = 8;
@@ -6773,9 +7374,11 @@ interface KeyMatch {
 
 // @public (undocumented)
 export class KeyRecord {
-    constructor(principal: string, verifyingKey: Uint8Array, kind?: KeyKind, validFromMicros?: bigint, validToMicros?: bigint | undefined, revoked?: boolean);
+    constructor(principal: string, verifying: Uint8Array, kind?: KeyKind, validFromMicros?: bigint, validToMicros?: bigint | undefined, revoked?: boolean);
     // (undocumented)
     static agent(principal: string, verifyingKey: Uint8Array): KeyRecord;
+    static fromVerifyingBytes(principal: string, verifying: Uint8Array, kind: KeyKind): KeyRecord;
+    keyId(): Uint8Array;
     // (undocumented)
     readonly kind: KeyKind;
     // (undocumented)
@@ -6793,7 +7396,7 @@ export class KeyRecord {
     // (undocumented)
     validWindow(fromMicros: bigint, toMicros?: bigint): KeyRecord;
     // (undocumented)
-    readonly verifyingKey: Uint8Array;
+    readonly verifying: Uint8Array;
 }
 
 // @public (undocumented)
@@ -6814,8 +7417,6 @@ export class KeyRegistry {
 
 // @public
 export class Kv {
-    // Warning: (ae-forgotten-export) The symbol "KvBackend" needs to be exported by the entry point full.d.ts
-    constructor(backend: KvBackend, getCapabilities: () => Promise<Capabilities>, namespace: string);
     casFenced(key: Uint8Array, fenceNamespace: string, fenceKey: Uint8Array, fenceToken: bigint): KvCasFencedRequest;
     copyTo(key: Uint8Array, toKey: Uint8Array): KvCopyRequest;
     // (undocumented)
@@ -6823,7 +7424,8 @@ export class Kv {
     deleteMany(): KvDeleteManyRequest;
     // (undocumented)
     exists(key: Uint8Array): Promise<KvMetadata | undefined>;
-    expire(key: Uint8Array, expiresAtMicros?: bigint): Promise<bigint>;
+    expire(key: Uint8Array, ttlMicros?: bigint, nowMicros?: bigint): Promise<bigint>;
+    expireAt(key: Uint8Array, expiresAtMicros?: bigint): Promise<bigint>;
     // (undocumented)
     get(key: Uint8Array): Promise<Uint8Array | undefined>;
     getAs<T>(key: Uint8Array, codec: Codec<T>): Promise<T | undefined>;
@@ -6838,8 +7440,6 @@ export class Kv {
     moveTo(key: Uint8Array, toKey: Uint8Array): KvCopyRequest;
     // (undocumented)
     readonly namespace: string;
-    // (undocumented)
-    static namespaces(backend: KvBackend, getCapabilities: () => Promise<Capabilities>): Promise<readonly KvNamespaceInfo[]>;
     patch(key: Uint8Array, patch: Uint8Array): Promise<bigint>;
     release(key: Uint8Array, holderId: string, token: bigint): Promise<boolean>;
     renewLease(key: Uint8Array, holderId: string, token: bigint, leaseTtlMicros: bigint): Promise<Lease>;
@@ -6856,6 +7456,17 @@ const KV_OP_VERSION = 1;
 
 // @public (undocumented)
 const KV_PATH = "/agdx/kv";
+
+// @public (undocumented)
+export interface KvCaps {
+    // (undocumented)
+    readonly available: boolean;
+    // (undocumented)
+    readonly cas: boolean;
+    // (undocumented)
+    readonly casFenced: boolean;
+    readonly fencedLeases: boolean;
+}
 
 // @public (undocumented)
 interface KvCapsView {
@@ -6879,6 +7490,7 @@ interface KvCas {
     readonly key: Uint8Array;
     // (undocumented)
     readonly namespace: string;
+    readonly v?: number;
     // (undocumented)
     readonly value: Uint8Array;
 }
@@ -6887,7 +7499,7 @@ interface KvCas {
 const KvCasCommand: ManagedCommand<KvCas, KvReply>;
 
 // @public (undocumented)
-interface KvCasFenced {
+export interface KvCasFenced {
     // (undocumented)
     readonly expect: CasExpect;
     // (undocumented)
@@ -6901,6 +7513,7 @@ interface KvCasFenced {
     readonly key: Uint8Array;
     // (undocumented)
     readonly namespace: string;
+    readonly v?: number;
     // (undocumented)
     readonly value: Uint8Array;
 }
@@ -6910,7 +7523,6 @@ const KvCasFencedCommand: ManagedCommand<KvCasFenced, KvReply>;
 
 // @public
 export class KvCasFencedRequest {
-    constructor(backend: KvBackend, getCapabilities: () => Promise<Capabilities>, namespace: string, key: Uint8Array, fenceNamespace: string, fenceKey: Uint8Array, fenceToken: bigint);
     // (undocumented)
     bytes(payload: Uint8Array): this;
     commit(): Promise<bigint>;
@@ -6924,6 +7536,8 @@ export class KvCasFencedRequest {
     expiresAt(epochMicros: bigint): this;
     // (undocumented)
     json(value: unknown): this;
+    // (undocumented)
+    msgpack(value: unknown): this;
     ttl(ttlMicros: bigint, nowMicros?: bigint): this;
 }
 
@@ -6940,6 +7554,7 @@ interface KvCopy {
     readonly toKey: Uint8Array;
     // (undocumented)
     readonly toNamespace?: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -6947,7 +7562,6 @@ const KvCopyCommand: ManagedCommand<KvCopy, KvReply>;
 
 // @public
 export class KvCopyRequest {
-    constructor(backend: KvBackend, getCapabilities: () => Promise<Capabilities>, namespace: string, key: Uint8Array, toKey: Uint8Array, deleteSource: boolean);
     // (undocumented)
     intoNamespace(namespace: string): this;
     // (undocumented)
@@ -6962,6 +7576,7 @@ interface KvDelete {
     readonly key: Uint8Array;
     // (undocumented)
     readonly namespace: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -6981,6 +7596,7 @@ interface KvDeleteMany {
     readonly prefix?: Uint8Array;
     // (undocumented)
     readonly start?: Uint8Array;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -6988,7 +7604,6 @@ const KvDeleteManyCommand: ManagedCommand<KvDeleteMany, KvReply>;
 
 // @public
 export class KvDeleteManyRequest {
-    constructor(backend: KvBackend, getCapabilities: () => Promise<Capabilities>, namespace: string);
     // (undocumented)
     conversation(conversationId: string): this;
     // (undocumented)
@@ -7017,8 +7632,14 @@ export interface KvEntry {
     readonly version: bigint;
 }
 
+// @public
+export function kvEntryDecodeValue<T = unknown>(entry: KvEntry, decodeValue?: (value: unknown) => T): T;
+
+// @public
+export function kvEntryDecodeValueWith<T>(entry: KvEntry, decoder: Decoder<T>): T;
+
 // @public (undocumented)
-function kvEntryKeyString(entry: KvEntry): string | undefined;
+export function kvEntryKeyStr(entry: KvEntry): string | undefined;
 
 // @public (undocumented)
 const kvEntryPath: (namespace: string, key: string) => string;
@@ -7095,6 +7716,7 @@ interface KvExists {
     readonly key: Uint8Array;
     // (undocumented)
     readonly namespace: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -7108,13 +7730,14 @@ interface KvExpire {
     readonly key: Uint8Array;
     // (undocumented)
     readonly namespace: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
 const KvExpireCommand: ManagedCommand<KvExpire, KvReply>;
 
 // @public (undocumented)
-interface KvGet {
+export interface KvGet {
     // (undocumented)
     readonly ifNoneMatch?: bigint;
     // (undocumented)
@@ -7122,6 +7745,7 @@ interface KvGet {
     readonly minPosition?: MutationPosition;
     // (undocumented)
     readonly namespace: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -7130,12 +7754,8 @@ const KvGetCommand: ManagedCommand<KvGet, KvReply>;
 // @public (undocumented)
 export class KvKeyRegistry {
     constructor(laser: Laser, namespace?: string);
-    // (undocumented)
-    enroll(record: KeyRecord): Promise<void>;
-    // (undocumented)
+    enroll(principal: string, verifyingKey: Uint8Array): Promise<void>;
     enrollRecord(record: KeyRecord): Promise<bigint>;
-    // (undocumented)
-    readonly namespace: string;
     // (undocumented)
     registry(): Promise<KeyRegistry>;
     // (undocumented)
@@ -7143,7 +7763,7 @@ export class KvKeyRegistry {
 }
 
 // @public (undocumented)
-interface KvLease {
+export interface KvLease {
     readonly holderId: string;
     // (undocumented)
     readonly key: Uint8Array;
@@ -7152,13 +7772,14 @@ interface KvLease {
     // (undocumented)
     readonly namespace: string;
     readonly subjectUserId?: number;
+    readonly v?: number;
 }
 
 // @public (undocumented)
 const KvLeaseCommand: ManagedCommand<KvLease, KvReply>;
 
 // @public (undocumented)
-interface KvLeaseRenew {
+export interface KvLeaseRenew {
     // (undocumented)
     readonly holderId: string;
     // (undocumented)
@@ -7171,6 +7792,7 @@ interface KvLeaseRenew {
     readonly namespace: string;
     // (undocumented)
     readonly subjectUserId?: number;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -7196,6 +7818,7 @@ interface KvMove {
     readonly toKey: Uint8Array;
     // (undocumented)
     readonly toNamespace?: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -7213,10 +7836,15 @@ export interface KvNamespaceInfo {
 const kvNamespacePath: (namespace: string) => string;
 
 // @public (undocumented)
+interface KvNamespaces {
+    readonly v?: number;
+}
+
+// @public (undocumented)
 const KvNamespacesCommand: ManagedCommand<undefined, KvReply>;
 
 // @public (undocumented)
-export type KvOutcome = {
+type KvOutcome = {
     readonly kind: "value";
     readonly entry?: KvEntry;
 } | {
@@ -7289,13 +7917,14 @@ interface KvPatch {
     readonly namespace: string;
     // (undocumented)
     readonly patch: Uint8Array;
+    readonly v?: number;
 }
 
 // @public (undocumented)
 const KvPatchCommand: ManagedCommand<KvPatch, KvReply>;
 
 // @public (undocumented)
-interface KvRelease {
+export interface KvRelease {
     readonly holderId: string;
     // (undocumented)
     readonly key: Uint8Array;
@@ -7303,6 +7932,7 @@ interface KvRelease {
     readonly leaseToken: bigint;
     // (undocumented)
     readonly namespace: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -7339,6 +7969,7 @@ interface KvScan {
     readonly prefix?: Uint8Array;
     // (undocumented)
     readonly start?: Uint8Array;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -7346,7 +7977,6 @@ const KvScanCommand: ManagedCommand<KvScan, KvReply>;
 
 // @public
 export class KvScanRequest {
-    constructor(backend: KvBackend, getCapabilities: () => Promise<Capabilities>, namespace: string);
     conversation(conversationId: string): this;
     // (undocumented)
     cursor(cursor: Uint8Array): this;
@@ -7355,7 +7985,6 @@ export class KvScanRequest {
     fetch(): Promise<KvPage>;
     // (undocumented)
     keyContains(substring: string): this;
-    // (undocumented)
     limit(n: number): this;
     // (undocumented)
     prefix(prefix: Uint8Array): this;
@@ -7371,6 +8000,7 @@ interface KvSet {
     readonly key: Uint8Array;
     // (undocumented)
     readonly namespace: string;
+    readonly v?: number;
     // (undocumented)
     readonly value: Uint8Array;
 }
@@ -7380,7 +8010,6 @@ const KvSetCommand: ManagedCommand<KvSet, KvReply>;
 
 // @public
 export class KvSetRequest {
-    constructor(backend: KvBackend, getCapabilities: () => Promise<Capabilities>, namespace: string, key: Uint8Array);
     // (undocumented)
     bytes(payload: Uint8Array): this;
     commit(): Promise<bigint>;
@@ -7395,6 +8024,7 @@ export class KvSetRequest {
     // (undocumented)
     json(value: unknown): this;
     // (undocumented)
+    msgpack(value: unknown): this;
     send(): Promise<void>;
     ttl(ttlMicros: bigint, nowMicros?: bigint): this;
 }
@@ -7405,8 +8035,6 @@ export class KvSnapshotStore implements SnapshotStore {
     // (undocumented)
     latest(conversation: ConversationId): Promise<FoldSnapshot | undefined>;
     // (undocumented)
-    readonly namespace: string;
-    // (undocumented)
     save(snapshot: FoldSnapshot): Promise<void>;
 }
 
@@ -7415,19 +8043,9 @@ function lakehouseTarget(destinationId: DestinationId, destinationGeneration: bi
 
 // @public
 export class Laser implements AsyncDisposable {
-    // (undocumented)
-    [INTERNAL_GOVERN](action: Omit<Parameters<GovernorState["govern"]>[0], "counters">): Promise<Uint8Array>;
-    // Warning: (ae-forgotten-export) The symbol "ReplyHub" needs to be exported by the entry point full.d.ts
-    //
-    // (undocumented)
-    [INTERNAL_REPLY_HUB](topic: string): Promise<ReplyHub>;
-    // (undocumented)
-    [INTERNAL_TRANSPORT](): LaserTransport;
-    // (undocumented)
-    [INTERNAL_VERIFIER](): KeyRegistry | undefined;
     [Symbol.asyncDispose](): Promise<void>;
     // (undocumented)
-    advertisePresence(presence: AgentPresenceInput): Promise<void>;
+    advertisePresence(presence: AgentPresence): Promise<void>;
     // (undocumented)
     agdx(topic: string, source: AgentId, conversation: ConversationId): Agdx;
     // (undocumented)
@@ -7446,12 +8064,15 @@ export class Laser implements AsyncDisposable {
     bootstrap(partitions: number): Promise<void>;
     // (undocumented)
     static builder(): LaserBuilder;
+    cancelQuery(executionId: QueryExecutionId): Promise<QueryExecutionStatus>;
     // (undocumented)
     capabilities(): Promise<Capabilities>;
     // (undocumented)
     get changesTopic(): string;
     // (undocumented)
     clearPresence(): Promise<void>;
+    // (undocumented)
+    get client(): IggyClient;
     // (undocumented)
     clientMetadata(): ClientMetadataRequest;
     close(): Promise<void>;
@@ -7469,8 +8090,6 @@ export class Laser implements AsyncDisposable {
     // (undocumented)
     get controlTopic(): string;
     // (undocumented)
-    get deadLetterTopic(): string;
-    // (undocumented)
     readonly defaultStream: string | undefined;
     // (undocumented)
     defineRole(role: Role): Promise<void>;
@@ -7479,21 +8098,25 @@ export class Laser implements AsyncDisposable {
     // (undocumented)
     destinations(): Destinations;
     // (undocumented)
-    executeBatch(ops: readonly BatchItem[]): Promise<readonly Uint8Array[]>;
+    get dlqTopic(): string;
     // (undocumented)
-    fork(forkId: string): Fork;
+    executeBatch(ops: readonly BatchItem[]): Promise<readonly Uint8Array[]>;
+    executeCheckpoint(request: CheckpointRequestEnvelope): Promise<CheckpointMutationResult>;
+    executeQuery(query: Query): Promise<QueryResult>;
+    // (undocumented)
+    fork(forkId: string): ForkHandle;
     // (undocumented)
     forks(): Promise<readonly ForkInfo[]>;
-    // (undocumented)
-    static fromIggyClient(client: IggyClient, options?: InjectedClientOptions): Promise<Laser>;
+    // Warning: (ae-forgotten-export) The symbol "IggyClient" needs to be exported by the entry point full.d.ts
+    static fromClient(client: IggyClient, options?: {
+        readonly ownership?: ClientOwnership;
+    }): Promise<Laser>;
     // (undocumented)
     getBindings(userId: number): Promise<readonly string[]>;
     // (undocumented)
     getRole(name: string): Promise<Role | undefined>;
     // (undocumented)
     graph(name: string): GraphHandle;
-    // (undocumented)
-    get iggyClient(): LaserTransport["iggyClient"];
     // (undocumented)
     kv(namespace: string): Kv;
     // (undocumented)
@@ -7516,11 +8139,9 @@ export class Laser implements AsyncDisposable {
     // (undocumented)
     get opsStream(): string;
     // (undocumented)
-    policyEvidence(conversation: ConversationId): Promise<readonly PolicyEvidence[]>;
-    // (undocumented)
     projections(): Projections;
     // (undocumented)
-    publishCard(source: AgentId, card: AgentCard): Promise<void>;
+    publishCard(source: AgentId, card: AgentCard_2): Promise<void>;
     // (undocumented)
     publishStateDelta(topic: string, source: AgentId, conversation: ConversationId, patch: unknown): Promise<void>;
     // (undocumented)
@@ -7533,6 +8154,8 @@ export class Laser implements AsyncDisposable {
     query(index: string): QueryRequest;
     // (undocumented)
     queryLakehouse(destinationId: DestinationId, destinationGeneration: bigint): QueryRequest;
+    queryPage(executionId: QueryExecutionId, cursor: string, deadlineMicros: bigint): Promise<QueryResult>;
+    queryStatus(executionId: QueryExecutionId): Promise<QueryExecutionStatus>;
     // (undocumented)
     queryTarget(target: QueryTarget): QueryRequest;
     // (undocumented)
@@ -7557,7 +8180,7 @@ export class Laser implements AsyncDisposable {
     sendAgent(topic: string, payload: BytesLike, provenance: Provenance, options?: {
         readonly contentType?: ContentType;
     }): Promise<void>;
-    sessions(options?: SessionOptions): Sessions;
+    sessions(config?: SessionConfig): Sessions;
     // (undocumented)
     spawnSubconversation(parent: Provenance): Provenance;
     // (undocumented)
@@ -7576,22 +8199,22 @@ export class Laser implements AsyncDisposable {
     whoami(): Promise<WhoamiReply>;
     // (undocumented)
     withCapabilities(capabilities: Capabilities): Laser;
+    withChangesTopic(changesTopic: string): Laser;
+    withControlTopic(controlTopic: string): Laser;
     // (undocumented)
     withDefaultStream(stream: string): Laser;
+    withDlqTopic(dlqTopic: string): Laser;
     // (undocumented)
     withGovernor(governor: ActionGovernor, mode: GovernorMode, retention?: Partial<GovernorRetention>): Laser;
     // (undocumented)
     withObserver(observer: LaserObserver): Laser;
-    // (undocumented)
-    withVerifier(verifier: KeyRegistry): Laser;
+    withOpsStream(opsStream: string): Laser;
     // (undocumented)
     workflow(name: string): Workflow;
 }
 
 // @public (undocumented)
 export class LaserBuilder {
-    // Warning: (ae-forgotten-export) The symbol "LaserBuildOptions" needs to be exported by the entry point full.d.ts
-    constructor(create: (options: LaserBuildOptions) => Promise<Laser>);
     // (undocumented)
     address(host: string, port?: number): this;
     // (undocumented)
@@ -7599,6 +8222,9 @@ export class LaserBuilder {
     // (undocumented)
     changesTopic(value: string): this;
     // (undocumented)
+    client(client: IggyClient, options?: {
+        readonly ownership?: ClientOwnership;
+    }): this;
     connect(): Promise<Laser>;
     // (undocumented)
     connectionString(value: string): this;
@@ -7608,15 +8234,9 @@ export class LaserBuilder {
     // (undocumented)
     credentials(username: string, password: string): this;
     // (undocumented)
-    deadLetterTopic(value: string): this;
-    // (undocumented)
-    defaultStream(value: string): this;
+    dlqTopic(value: string): this;
     // (undocumented)
     governor(policy: ActionGovernor, mode: GovernorMode, retention?: Partial<GovernorRetention>): this;
-    // (undocumented)
-    iggyClient(client: IggyClient, options?: {
-        readonly ownership?: ClientOwnership;
-    }): this;
     // (undocumented)
     observer(value: LaserObserver): this;
     // (undocumented)
@@ -7628,22 +8248,21 @@ export class LaserBuilder {
     // (undocumented)
     publishTimeout(milliseconds: number): this;
     // (undocumented)
-    token(value: string): this;
+    stream(value: string): this;
     // (undocumented)
     verifier(value: KeyRegistry): this;
 }
 
 // @public (undocumented)
 export class LaserError extends Error {
-    constructor(message: string, kind: LaserErrorKind, options?: {
+    protected constructor(message: string, kind: LaserErrorKind, options?: {
         cause?: unknown;
     });
+    // Warning: (ae-forgotten-export) The symbol "LaserErrorKind" needs to be exported by the entry point full.d.ts
+    //
     // (undocumented)
     readonly kind: LaserErrorKind;
 }
-
-// @public (undocumented)
-export type LaserErrorKind = "config" | "no-stream" | "timeout" | "ambiguous-mutation" | "cancelled" | "unsupported" | "invalid" | "codec" | "typed-decode" | "protocol" | "transport" | "query" | "kv" | "fork" | "graph" | "authz" | "filter" | "agent-workflow" | "routing" | "presence-conflict" | "signature" | "handler" | "handler-config" | "state-store" | "integrity" | "rejected" | "budget-exceeded" | "policy-blocked" | "step-up-required" | "policy-deferred";
 
 // @public (undocumented)
 export interface LaserObserver {
@@ -7681,18 +8300,55 @@ export const Lifetime: {
 // @public (undocumented)
 export type Lifetime = (typeof Lifetime)[keyof typeof Lifetime];
 
-// Warning: (ae-forgotten-export) The symbol "ListFilterBindings" needs to be exported by the entry point full.d.ts
-//
+// @public (undocumented)
+interface ListFilterBindings {
+    // (undocumented)
+    readonly filterId?: number;
+    // (undocumented)
+    readonly page: number;
+    // (undocumented)
+    readonly pageSize: number;
+    // (undocumented)
+    readonly stream?: string;
+    // (undocumented)
+    readonly topic?: string;
+    // (undocumented)
+    readonly v: number;
+}
+
 // @public (undocumented)
 const ListFilterBindingsCommand: ManagedCommand<ListFilterBindings, FilterCatalogReply>;
 
-// Warning: (ae-forgotten-export) The symbol "ListFilterRevisions" needs to be exported by the entry point full.d.ts
-//
+// @public (undocumented)
+interface ListFilterRevisions {
+    // (undocumented)
+    readonly filterId: number;
+    // (undocumented)
+    readonly page: number;
+    // (undocumented)
+    readonly pageSize: number;
+    // (undocumented)
+    readonly v: number;
+}
+
 // @public (undocumented)
 const ListFilterRevisionsCommand: ManagedCommand<ListFilterRevisions, FilterCatalogReply>;
 
-// Warning: (ae-forgotten-export) The symbol "ListFilters" needs to be exported by the entry point full.d.ts
-//
+// @public (undocumented)
+interface ListFilters {
+    readonly beforeId?: number;
+    // (undocumented)
+    readonly nameContains?: string;
+    // (undocumented)
+    readonly page: number;
+    // (undocumented)
+    readonly pageSize: number;
+    // (undocumented)
+    readonly state?: FilterState;
+    // (undocumented)
+    readonly v: number;
+}
+
 // @public (undocumented)
 const ListFiltersCommand: ManagedCommand<ListFilters, FilterCatalogReply>;
 
@@ -7720,6 +8376,7 @@ const ListRolesCommand: ManagedCommand<ListRolesReq, AuthzReply>;
 interface ListRolesReply {
     // (undocumented)
     readonly roles: readonly Role[];
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -7728,6 +8385,7 @@ interface ListRolesReq {
     readonly namePrefix?: string;
     // (undocumented)
     readonly search?: string;
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -7777,6 +8435,12 @@ export interface LogicalSchema {
 }
 
 // @public (undocumented)
+export function logicalSchemaCanonicalFingerprintBytes(schema: LogicalSchema): Uint8Array;
+
+// @public (undocumented)
+export function logicalSchemaComputeFingerprint(schema: LogicalSchema): SchemaFingerprint;
+
+// @public (undocumented)
 class LogicalSchemaId extends WireId<"LogicalSchemaId"> {
     // (undocumented)
     static fromBytes(bytes: Uint8Array): LogicalSchemaId;
@@ -7789,7 +8453,7 @@ class LogicalSchemaId extends WireId<"LogicalSchemaId"> {
 // @public (undocumented)
 export interface LogicalSchemaRef {
     // (undocumented)
-    readonly fingerprint: Uint8Array;
+    readonly fingerprint: SchemaFingerprint;
     // (undocumented)
     readonly id: LogicalSchemaId;
     // (undocumented)
@@ -7824,40 +8488,36 @@ export type LogicalType = {
 };
 
 // @public (undocumented)
+export function logicalTypeAcceptsMapKey(logicalType: LogicalType): boolean;
+
+// @public (undocumented)
 type LogicalTypeKind = LogicalType["kind"];
 
 // @public (undocumented)
+export function logicalTypeKind(logicalType: LogicalType): LogicalTypeKind;
+
+// @public (undocumented)
 export class LogMemory implements Memory {
-    constructor(laser: Laser, namespace: string, topic?: string, stream?: string | undefined);
+    constructor(laser: Laser, namespace?: string, topic?: string, stream?: string | undefined);
     // (undocumented)
     append(scope: MemoryScope, id: MemoryId, kind: MemoryKind, payload: Uint8Array): Promise<MemoryId>;
-    fetch(key: string): Promise<Uint8Array | undefined>;
-    // (undocumented)
-    fetchFolded(key: string): Promise<Uint8Array | undefined>;
+    fetchNamed(key: string): Promise<Uint8Array | undefined>;
+    fetchNamedFolded(key: string): Promise<Uint8Array | undefined>;
     // (undocumented)
     forget(scope: MemoryScope, id: MemoryId): Promise<void>;
+    forgetNamed(key: string): Promise<void>;
     // (undocumented)
     improve(scope: MemoryScope, feedback: Feedback): Promise<MemoryId>;
-    // (undocumented)
-    readonly namespace: string;
     recall(scope: MemoryScope, query: MemoryQuery): Promise<readonly MemoryItem[]>;
     recallFolded(scope: MemoryScope, query: MemoryQuery): Promise<readonly MemoryItem[]>;
     // (undocumented)
     remember(scope: MemoryScope, payload: Uint8Array): Promise<MemoryId>;
-    // (undocumented)
-    remove(key: string): Promise<void>;
-    // (undocumented)
-    set(key: string, payload: Uint8Array): Promise<void>;
-    // (undocumented)
-    readonly stream: string | undefined;
-    // (undocumented)
-    readonly topic: string;
-    // (undocumented)
-    update(key: string, patch: Uint8Array): Promise<void>;
+    setNamed(key: string, payload: Uint8Array): Promise<void>;
+    updateNamed(key: string, patch: Uint8Array): Promise<void>;
 }
 
 // @public (undocumented)
-interface LogPosition {
+export interface LogPosition {
     // (undocumented)
     readonly offset: bigint;
     // (undocumented)
@@ -7869,10 +8529,10 @@ interface LogPosition {
 }
 
 // @public (undocumented)
-function logPositionFromBytes(bytes: Uint8Array): LogPosition;
+export function logPositionFromBytes(bytes: Uint8Array): LogPosition;
 
 // @public (undocumented)
-function logPositionToBytes(position: LogPosition): Uint8Array;
+export function logPositionToBytes(position: LogPosition): Uint8Array;
 
 // @public (undocumented)
 interface MaintenanceCapabilities {
@@ -7898,6 +8558,8 @@ interface ManagedCommand<Request, Reply> {
     decode(reply: Uint8Array): Reply;
     // (undocumented)
     encode(request: Request): Uint8Array;
+    // Warning: (ae-forgotten-export) The symbol "CapabilitySurface" needs to be exported by the entry point full.d.ts
+    //
     // (undocumented)
     readonly surface: CapabilitySurface;
     // (undocumented)
@@ -7907,6 +8569,18 @@ interface ManagedCommand<Request, Reply> {
         readonly surface: VersionSurface;
         readonly expected: number;
     };
+}
+
+// @public
+export interface ManagedKvTransport {
+    // (undocumented)
+    close?(): Promise<void>;
+    // (undocumented)
+    ready?(): Promise<void>;
+    // (undocumented)
+    reset(): Promise<void>;
+    // (undocumented)
+    send(code: number, frame: Uint8Array): Promise<Uint8Array>;
 }
 
 // @public (undocumented)
@@ -7920,7 +8594,7 @@ interface ManagedRequestEnvelope {
 }
 
 // @public (undocumented)
-interface MapEntry {
+export interface MapEntry {
     // (undocumented)
     readonly key: TypedValue;
     // (undocumented)
@@ -7929,6 +8603,8 @@ interface MapEntry {
 
 // @public
 export interface MatchedPage {
+    // Warning: (ae-forgotten-export) The symbol "ReaderTag" needs to be exported by the entry point full.d.ts
+    //
     // (undocumented)
     readonly [READER_TAG]?: ReaderTag;
     // (undocumented)
@@ -7952,17 +8628,13 @@ export interface MatchedRecord {
     readonly evaluated: boolean;
     readonly frontier: bigint;
     // (undocumented)
-    readonly headers: ReadonlyMap<string, IggyHeaderValue>;
-    // (undocumented)
     readonly headersMalformed?: boolean;
     json(): unknown;
+    readonly message: ConsumerMessage;
     // (undocumented)
     readonly offset: bigint;
     // (undocumented)
     readonly partitionId: number;
-    // (undocumented)
-    readonly payload: Uint8Array;
-    readonly timestampMicros?: bigint;
 }
 
 // @public (undocumented)
@@ -8259,6 +8931,9 @@ const MAX_RAW_SQL_BYTES: number;
 const MAX_RECALL_LIMIT = 1000;
 
 // @public (undocumented)
+const MAX_REGEX_PREDICATES = 4;
+
+// @public (undocumented)
 const MAX_REPAIR_DETAIL_BYTES = 4096;
 
 // @public (undocumented)
@@ -8289,22 +8964,13 @@ const MAX_VALUE_BYTES: number;
 const MAX_VECTOR_DIMENSIONS = 65536;
 
 // @public (undocumented)
-export const MCP_APP_ERROR_CODE = -32000;
-
-// @public (undocumented)
-export const MCP_DEFAULT_PROTOCOL_VERSION = "2025-11-25";
-
-// @public (undocumented)
 export class McpBridge {
     constructor(laser: Laser, source: AgentId, toolTopic: string, replyTopic: string, serverName: string);
-    // (undocumented)
-    callTool(name: string, params: unknown): Promise<McpToolResult>;
-    // (undocumented)
-    callToolJson(name: string, paramsJson: Uint8Array): Promise<McpToolResult>;
+    callTool(name: string, paramsJson: unknown): Promise<McpToolResult>;
     // (undocumented)
     getPrompt(name: string): unknown;
     // (undocumented)
-    handleRpc(input: unknown): Promise<JsonRpcResponse>;
+    handleRpc(input: unknown): Promise<McpRpcResponse>;
     // (undocumented)
     initialize(protocolVersion?: string): unknown;
     // (undocumented)
@@ -8315,8 +8981,6 @@ export class McpBridge {
     listTools(): unknown;
     // (undocumented)
     readResource(uri: string): unknown;
-    // (undocumented)
-    readonly serverName: string;
     // (undocumented)
     withBridgeHops(previous: readonly string[]): this;
     // (undocumented)
@@ -8334,9 +8998,9 @@ export class McpBridge {
 // @public (undocumented)
 export interface McpContent {
     // (undocumented)
-    readonly text: string;
+    readonly kind: "text";
     // (undocumented)
-    readonly type: "text";
+    readonly text: string;
 }
 
 // @public (undocumented)
@@ -8390,6 +9054,36 @@ export interface McpResource {
 }
 
 // @public (undocumented)
+export interface McpRpcError {
+    // (undocumented)
+    readonly code: number;
+    // (undocumented)
+    readonly message: string;
+}
+
+// @public (undocumented)
+export interface McpRpcRequest {
+    // (undocumented)
+    readonly id?: unknown;
+    // (undocumented)
+    readonly method: string;
+    // (undocumented)
+    readonly params?: unknown;
+}
+
+// @public (undocumented)
+export interface McpRpcResponse {
+    // (undocumented)
+    readonly error?: McpRpcError;
+    // (undocumented)
+    readonly id: unknown;
+    // (undocumented)
+    readonly jsonrpc: "2.0";
+    // (undocumented)
+    readonly result?: unknown;
+}
+
+// @public (undocumented)
 export interface McpTool {
     // (undocumented)
     readonly description?: string;
@@ -8411,6 +9105,8 @@ export interface McpToolResult {
 
 // @public (undocumented)
 export interface Memory {
+    // (undocumented)
+    append?(scope: MemoryScope, id: MemoryId, kind: MemoryKind, payload: Uint8Array): Promise<MemoryId>;
     // (undocumented)
     forget(scope: MemoryScope, id: MemoryId): Promise<void>;
     // (undocumented)
@@ -8441,6 +9137,9 @@ export const MemoryBackend: {
 export type MemoryBackend = (typeof MemoryBackend)[keyof typeof MemoryBackend];
 
 // @public (undocumented)
+export type MemoryBackendKind = "log" | "vector" | "custom";
+
+// @public (undocumented)
 export const MemoryClass: {
     readonly Episodic: "episodic";
     readonly Semantic: "semantic";
@@ -8455,28 +9154,18 @@ export function memoryClass(kind: MemoryKind): MemoryClass;
 
 // @public (undocumented)
 export class MemoryHandle implements Memory {
-    constructor(backend: Memory);
     // (undocumented)
     append(scope: MemoryScope, id: MemoryId, kind: MemoryKind, payload: Uint8Array): Promise<MemoryId>;
-    // (undocumented)
-    consolidate(scope: MemoryScope, maxItems: number): Promise<ConsolidationReport>;
+    get backend(): MemoryBackendKind;
+    consolidate(scope: MemoryScope, maxItems: number, options?: ConsolidateOptions): Promise<ConsolidationReport>;
     // (undocumented)
     context(scope: MemoryScope, query?: MemoryQuery): Promise<string>;
-    // (undocumented)
-    static custom(memory: Memory): MemoryHandle;
-    // (undocumented)
+    embedder(embedder: Embedder): MemoryHandle;
+    fetch(key: string): Promise<Uint8Array | undefined>;
+    fetchFolded(key: string): Promise<Uint8Array | undefined>;
     forget(scope: MemoryScope, id: MemoryId): Promise<void>;
-    // (undocumented)
-    static governedVector(laser: Laser, embedder?: Embedder): MemoryHandle;
-    // (undocumented)
     improve(scope: MemoryScope, feedback: Feedback): Promise<MemoryId>;
-    // (undocumented)
-    static log(laser: Laser, namespace: string): MemoryHandle;
-    // (undocumented)
-    logBackend(): LogMemory | undefined;
-    static logTopic(laser: Laser, topic: string, stream?: string): MemoryHandle;
-    // (undocumented)
-    recall(): RecallBuilder;
+    recall(conversation?: ConversationId): RecallBuilder;
     // (undocumented)
     recall(scope: MemoryScope, query: MemoryQuery): Promise<readonly MemoryItem[]>;
     recallFolded(scope: MemoryScope, query: MemoryQuery): Promise<readonly MemoryItem[]>;
@@ -8484,17 +9173,26 @@ export class MemoryHandle implements Memory {
     remember(payload: Uint8Array): RememberBuilder;
     // (undocumented)
     remember(scope: MemoryScope, payload: Uint8Array): Promise<MemoryId>;
+    remove(key: string): Promise<void>;
     // (undocumented)
     reranker(reranker: Reranker): MemoryHandle;
+    set(key: string, payload: Uint8Array): Promise<void>;
+    update(key: string, patch: Uint8Array): Promise<void>;
+    static vector(embedder: Embedder): MemoryHandle;
+}
+
+// @public
+export class MemoryHandler implements AgentHandler {
+    constructor(handler: AgentHandler, memory: MemoryHandle);
+    autoRemember(kind: MemoryKind): this;
     // (undocumented)
-    static vector(embedder?: Embedder): MemoryHandle;
+    handle(message: AgentMessage, context: AgentCtx): Promise<void>;
 }
 
 // @public (undocumented)
 export class MemoryId {
     // (undocumented)
     asU128(): bigint;
-    // (undocumented)
     static content(owner: MemoryScope, kind: MemoryKind, body: Uint8Array): MemoryId;
     // (undocumented)
     equals(other: MemoryId): boolean;
@@ -8530,6 +9228,12 @@ export interface MemoryItem {
     readonly source?: SourceRef;
 }
 
+// @public
+export function memoryItemJson<T = unknown>(item: MemoryItem, decodeValue?: (value: unknown) => T): T;
+
+// @public
+export function memoryItemText(item: MemoryItem): string;
+
 // @public (undocumented)
 export const MemoryKind: {
     readonly Fact: "fact";
@@ -8542,6 +9246,9 @@ export const MemoryKind: {
 
 // @public (undocumented)
 export type MemoryKind = (typeof MemoryKind)[keyof typeof MemoryKind];
+
+// @public
+export function memoryKindCode(kind: MemoryKind): number;
 
 // @public (undocumented)
 export interface MemoryQuery {
@@ -8593,7 +9300,7 @@ export interface MemoryScope {
     // (undocumented)
     readonly agent?: AgentId;
     // (undocumented)
-    readonly application?: string;
+    readonly app?: string;
     // (undocumented)
     readonly conversation?: ConversationId;
     // (undocumented)
@@ -8606,12 +9313,21 @@ export interface MemoryScope {
 
 // @public
 export class MemoryTopicBuilder {
-    constructor(laser: Laser, topic: string);
     build(): Promise<MemoryHandle>;
     noExpiry(): this;
     partitions(count: number): this;
     stream(name: string): this;
     ttl(milliseconds: number): this;
+}
+
+// @public
+export interface Message {
+    // (undocumented)
+    readonly headers: Headers_2;
+    readonly id: MessageId;
+    json<T = unknown>(decodeValue?: (value: unknown) => T): T;
+    // (undocumented)
+    readonly payload: Uint8Array;
 }
 
 // @public (undocumented)
@@ -8626,10 +9342,7 @@ export interface MessageId {
 export function messageIdToString(id: MessageId): string;
 
 // @public (undocumented)
-export function messagePackCodec<T>(decodeValue: ValueDecoder<T>): Codec<T>;
-
-// @public (undocumented)
-export const METADATA_BRIDGE_HOPS = "bridge_hops";
+const METADATA_BRIDGE_HOPS = "bridge_hops";
 
 // @public (undocumented)
 const METADATA_DATA_CLASSIFICATION = "data_classification";
@@ -8658,6 +9371,31 @@ const MICROS_PER_DAY = 86400000000n;
 // @public (undocumented)
 const MIN_LEASE_TTL_MICROS = 1000000;
 
+// @public
+export const MIN_LINGER_MS = 1;
+
+// @public
+export interface MintUlid<T> {
+    // (undocumented)
+    fromU128(value: bigint): T;
+}
+
+// @public (undocumented)
+export const MintUlid: {
+    readonly mint: <T>(id: MintUlid<T>, source?: UlidSource) => T;
+};
+
+// @public
+export class Msgpack<T = unknown> implements Codec<T> {
+    constructor(decodeValue?: (value: unknown) => T);
+    // (undocumented)
+    readonly contentType: ContentType;
+    // (undocumented)
+    decode(payload: Uint8Array): T;
+    // (undocumented)
+    encode(value: T): Uint8Array;
+}
+
 // @public (undocumented)
 interface MutationCommandEnvelope {
     // (undocumented)
@@ -8683,7 +9421,7 @@ export interface MutationPosition {
 }
 
 // @public (undocumented)
-function newAgentPresence(agent: AgentId_2, inbox?: string): AgentPresence;
+export function newAgentPresence(agent: AgentId_2, inbox?: string): AgentPresence;
 
 // @public (undocumented)
 function newBackendAnnounce(versions: OpVersions): BackendAnnounce;
@@ -8704,6 +9442,13 @@ type NewPartitionPolicy = "beginning" | "captured_latest" | "reject";
 function newQuery(target: QueryTarget, executionId: QueryExecutionId, deadlineMicros: bigint): Query;
 
 // @public (undocumented)
+export class NoCapableAgentError extends LaserError {
+    constructor(skill: string);
+    // (undocumented)
+    readonly skill: string;
+}
+
+// @public (undocumented)
 export interface NodeExtract {
     // (undocumented)
     readonly embeddingPointer?: string;
@@ -8714,7 +9459,7 @@ export interface NodeExtract {
 }
 
 // @public (undocumented)
-export class NodeId extends WireId<"NodeId"> {
+class NodeId extends WireId<"NodeId"> {
     // (undocumented)
     static content(label: string, value: Uint8Array): NodeId;
     // (undocumented)
@@ -8726,7 +9471,19 @@ export class NodeId extends WireId<"NodeId"> {
 }
 
 // @public (undocumented)
+export class NoInboxError extends LaserError {
+    constructor(agent: string);
+    // (undocumented)
+    readonly agent: string;
+}
+
+// @public (undocumented)
 export const NOOP_OBSERVER: LaserObserver;
+
+// @public
+export class NoRespondTopicError extends LaserError {
+    constructor(message?: string);
+}
 
 // @public (undocumented)
 export class NoStreamError extends LaserError {
@@ -8739,13 +9496,19 @@ export class NoStreamError extends LaserError {
 export type ObservationLevel = "debug" | "info" | "warn" | "error";
 
 // @public (undocumented)
+export type ObserveEffect = <T>(operation: string, attributes: Readonly<Record<string, unknown>>, effect: () => Promise<T>) => Promise<T>;
+
+// @public (undocumented)
 export type OnTimeout = "fail" | "reassign";
+
+// @public (undocumented)
+export const OPEN_CAPABILITIES: Capabilities;
 
 // @public (undocumented)
 const OPERATION_CARD = "card";
 
 // @public (undocumented)
-export const OPERATION_CHAT = "chat";
+const OPERATION_CHAT = "chat";
 
 // @public (undocumented)
 const OPERATION_PROGRESS = "progress";
@@ -8754,25 +9517,28 @@ const OPERATION_PROGRESS = "progress";
 const OPERATION_QUARANTINE = "quarantine";
 
 // @public (undocumented)
-export const OPERATION_REASONING = "reasoning";
+const OPERATION_REASONING = "reasoning";
 
 // @public (undocumented)
-export const OPERATION_STATE_DELTA = "state_delta";
+const OPERATION_STATE_DELTA = "state_delta";
 
 // @public (undocumented)
-export const OPERATION_STATE_SNAPSHOT = "state_snapshot";
+const OPERATION_STATE_SNAPSHOT = "state_snapshot";
 
 // @public (undocumented)
-export const OPERATION_TASK = "task";
+const OPERATION_TASK = "task";
 
 // @public (undocumented)
-export const OPERATION_TOOL_ARGS = "tool_args";
+const OPERATION_TOOL_ARGS = "tool_args";
 
 // @public (undocumented)
 const OPERATION_UNQUARANTINE = "unquarantine";
 
 // @public (undocumented)
-function operationalTarget(index: string): QueryTarget;
+export function operationalQuery(executionId: QueryExecutionId, index: string, deadlineMicros: bigint): Query;
+
+// @public (undocumented)
+export function operationalTarget(index: string): QueryTarget;
 
 // @public (undocumented)
 interface OperationErrorView {
@@ -8786,10 +9552,10 @@ interface OperationErrorView {
 type OperationState = "accepted" | "running" | "succeeded" | "failed" | "cancelled";
 
 // @public (undocumented)
-const OPS_STREAM = "_agdx";
+export const OPS_STREAM_DEFAULT = "_agdx";
 
 // @public (undocumented)
-interface OpVersions {
+export interface OpVersions {
     // (undocumented)
     readonly agent: number;
     // (undocumented)
@@ -8811,10 +9577,10 @@ interface OpVersions {
 }
 
 // @public (undocumented)
-function opVersionsHasFeature(versions: OpVersions, bit: bigint): boolean;
+export function opVersionsHasFeature(versions: OpVersions, bit: bigint): boolean;
 
 // @public (undocumented)
-interface Page {
+export interface Page {
     // (undocumented)
     readonly hasMore: boolean;
     // (undocumented)
@@ -8828,16 +9594,22 @@ interface Page {
 }
 
 // @public (undocumented)
-function pageAtLeast(page: Page, rowsOnPage: number): bigint | undefined;
+export function pageAtLeast(page: Page, rowsOnPage: number): bigint | undefined;
 
 // @public (undocumented)
-function pageTotalPages(page: Page): bigint | undefined;
+export function pageTotalPages(page: Page): bigint | undefined;
 
 // @public (undocumented)
 const PARENT_CONVERSATION_ID = "agdx.parent_conv";
 
 // @public (undocumented)
+function parseAgentId(value: string): AgentId_2;
+
+// @public (undocumented)
 function parseAgentKind(value: string, context: string): AgentKind;
+
+// @public
+function parseCanonicalJson(text: string, mode?: "document" | "payload"): unknown;
 
 // @public (undocumented)
 function parseConsistency(value: string, context: string): Consistency;
@@ -8852,9 +9624,6 @@ export function parseMessageId(text: string): MessageId;
 export function parseProjectionId(value: string): ProjectionId;
 
 // @public (undocumented)
-export function parseWireAgentId(value: string): AgentId_2;
-
-// @public (undocumented)
 interface PartitionCheckpoint {
     // (undocumented)
     readonly incarnation: SourceIncarnation;
@@ -8865,6 +9634,9 @@ interface PartitionCheckpoint {
     // (undocumented)
     readonly startedAtOffset: bigint;
 }
+
+// @public (undocumented)
+export type PartitionLifecycleChange = "removed" | "recreated";
 
 // @public (undocumented)
 type PartitionLifecycleState = "active" | "removed" | "recreated";
@@ -8878,7 +9650,7 @@ interface PartitionStart {
 }
 
 // @public (undocumented)
-export interface Path {
+interface Path {
     // (undocumented)
     readonly edges: readonly EdgeId[];
     // (undocumented)
@@ -8893,6 +9665,20 @@ export type PathSegment = {
     readonly kind: "index";
     readonly index: number;
 };
+
+// @public
+class PayloadDecoders {
+    constructor(filter: ConsumerFilter, schemas: readonly SchemaDef[]);
+    // (undocumented)
+    decode(record: FilterRecord, limits: DecodeLimits): JsonValue | PayloadFault;
+}
+
+// @public (undocumented)
+class PayloadFault extends Error {
+    constructor(reason: FaultReason);
+    // (undocumented)
+    readonly reason: FaultReason;
+}
 
 // @public (undocumented)
 class PhysicalClusterIncarnation extends WireId<"PhysicalClusterIncarnation"> {
@@ -8984,22 +9770,7 @@ export interface PolicyRef {
 }
 
 // @public (undocumented)
-export type PollingStrategy = {
-    readonly kind: "first";
-} | {
-    readonly kind: "last";
-} | {
-    readonly kind: "next";
-} | {
-    readonly kind: "offset";
-    readonly value: bigint;
-} | {
-    readonly kind: "timestamp";
-    readonly value: bigint;
-};
-
-// @public (undocumented)
-interface Predicate {
+export interface Predicate {
     // (undocumented)
     readonly field: string;
     // (undocumented)
@@ -9085,6 +9856,14 @@ interface PreparedAttemptSummary {
 }
 
 // @public (undocumented)
+export interface PreparedMutation {
+    // (undocumented)
+    readonly ambiguousRecovery: AmbiguousMutationRecovery;
+    // (undocumented)
+    readonly operationId: bigint;
+}
+
+// @public (undocumented)
 interface PreparedTableRequirements {
     // (undocumented)
     readonly baseMetadataIdentity: string;
@@ -9110,14 +9889,6 @@ export class PresenceConflictError extends LaserError {
     readonly advertised: string;
     // (undocumented)
     readonly requested: string;
-}
-
-// @public (undocumented)
-export interface PresenceEntry {
-    // (undocumented)
-    readonly presence: AgentPresence;
-    // (undocumented)
-    readonly principal?: PrincipalId;
 }
 
 // @public (undocumented)
@@ -9151,9 +9922,8 @@ export class PrincipalId {
 // @public
 export class Producer implements AsyncDisposable {
     [Symbol.asyncDispose](): Promise<void>;
-    constructor(transport: LaserTransport, streamName: string, topicName: string, options?: ProducerOptions);
-    // (undocumented)
-    flush(): Promise<void>;
+    // Warning: (ae-forgotten-export) The symbol "ProducerSendOptions" needs to be exported by the entry point full.d.ts
+    //
     // (undocumented)
     send(payload: BytesLike, options?: ProducerSendOptions): Promise<SendMessagesResponse>;
     // (undocumented)
@@ -9162,8 +9932,6 @@ export class Producer implements AsyncDisposable {
     sendBatchWithRouting(messages: readonly ProducerMessage[], routing?: Routing): Promise<SendMessagesResponse>;
     // (undocumented)
     sendKeyed(message: ProducerMessage, key: BytesLike): Promise<SendMessagesResponse>;
-    // Warning: (ae-forgotten-export) The symbol "Routing" needs to be exported by the entry point full.d.ts
-    //
     // (undocumented)
     sendMessage(message: ProducerMessage, routing?: Routing): Promise<SendMessagesResponse>;
     // (undocumented)
@@ -9173,32 +9941,53 @@ export class Producer implements AsyncDisposable {
     shutdown(): Promise<void>;
 }
 
-// @public (undocumented)
-export interface ProducerMessage {
+// @public
+export interface ProducerBackgroundOptions {
+    readonly batchBytes?: number;
+    readonly batchLength?: number;
+    readonly failureMode?: {
+        readonly kind: "block";
+    } | {
+        readonly kind: "blockWithTimeout";
+        readonly timeoutMs: number;
+    } | {
+        readonly kind: "failImmediately";
+    };
+    readonly lingerMs?: number;
+    readonly maxBufferBytes?: number;
+    readonly maxInFlight?: number;
+    readonly onError?: (error: PublishFailedError) => void | Promise<void>;
+    readonly sharding?: "ordered" | "balanced";
+    readonly shards?: number;
+}
+
+// @public
+export class ProducerMessage {
+    constructor(payload: BytesLike);
+    header(key: string, value: HeaderValue): this;
     // (undocumented)
-    readonly headers?: ReadonlyMap<string, IggyHeaderValue> | Readonly<Record<string, IggyHeaderValue>>;
+    get headers(): Headers_2;
     // (undocumented)
-    readonly payload: BytesLike;
+    readonly payload: Uint8Array;
+    withHeaders(headers: Headers_2): this;
 }
 
 // @public (undocumented)
 export interface ProducerOptions {
-    // (undocumented)
+    readonly background?: ProducerBackgroundOptions;
+    readonly batchLength?: number;
+    readonly createStream?: boolean;
+    readonly createTopic?: boolean;
+    readonly expireAfterMicros?: bigint;
+    readonly lingerMs?: number;
+    readonly maxTopicBytes?: bigint;
+    readonly neverExpire?: boolean;
+    readonly partitions?: number;
     readonly retries?: number;
-    // (undocumented)
-    readonly retryIntervalMs?: number;
+    readonly retryBackoffMs?: number;
     // (undocumented)
     readonly routing?: Routing;
-}
-
-// @public (undocumented)
-export interface ProducerSendOptions {
-    // (undocumented)
-    readonly headers?: ReadonlyMap<string, IggyHeaderValue> | Readonly<Record<string, IggyHeaderValue>>;
-    // (undocumented)
-    readonly key?: Uint8Array;
-    // (undocumented)
-    readonly partition?: number;
+    readonly unlimitedTopicSize?: boolean;
 }
 
 // @public (undocumented)
@@ -9243,6 +10032,44 @@ export interface ProjectionBinding {
 }
 
 // @public (undocumented)
+export class ProjectionBindingBuilder {
+    allow(projection: string): this;
+    backend(backend: BackendBinding): this;
+    build(): ProjectionBinding;
+    defaultProjection(projection: string): this;
+    index(index: string): this;
+    notify(): this;
+    retention(retention: RetentionPolicy): this;
+    // (undocumented)
+    selector(source: SourceSelector): this;
+    source(stream: string, topic: string): this;
+    tryBuild(): ProjectionBinding | undefined;
+}
+
+// @public (undocumented)
+export class ProjectionBuilder {
+    constructor(id: string);
+    // (undocumented)
+    build(): Projection;
+    // (undocumented)
+    contentType(value: ContentType): this;
+    extraction(value: IndexSchema): this;
+    field(name: string): this;
+    fieldAt(name: string, pointer: string): this;
+    fieldAtTyped(name: string, pointer: string, fieldType: FieldType): this;
+    fields(names: Iterable<string>): this;
+    fieldTyped(name: string, fieldType: FieldType): this;
+    graph(schema: EntitySchema): this;
+    indexOnly(): this;
+    inlinePayload(): this;
+    // (undocumented)
+    name(value: string): this;
+    vectorField(pointer: string): this;
+    // (undocumented)
+    version(value: number): this;
+}
+
+// @public (undocumented)
 type ProjectionId = string & {
     readonly __projectionId: unique symbol;
 };
@@ -9269,7 +10096,10 @@ export type ProjectionKind = {
 function projectionKindCode(kind: ProjectionKind): number;
 
 // @public (undocumented)
-function projectionKindFromCode(code: number): ProjectionKind;
+export function projectionKindFromCode(code: number): ProjectionKind;
+
+// @public (undocumented)
+export function projectionKindIsRow(kind: ProjectionKind): boolean;
 
 // @public (undocumented)
 const projectionPath: (id: string) => string;
@@ -9284,8 +10114,6 @@ interface ProjectionRef {
 
 // @public (undocumented)
 export class Projections {
-    // Warning: (ae-forgotten-export) The symbol "BrowseBackend" needs to be exported by the entry point full.d.ts
-    constructor(backend: BrowseBackend, getCapabilities: () => Promise<Capabilities>, publishControl: PublishControl);
     // (undocumented)
     drop(id: string): Promise<void>;
     // (undocumented)
@@ -9305,7 +10133,6 @@ const PROJECTIONS_PATH = "/agdx/projections";
 
 // @public (undocumented)
 export class ProjectionsRequest {
-    constructor(backend: BrowseBackend, getCapabilities: () => Promise<Capabilities>);
     // (undocumented)
     fetch(): Promise<readonly ProjectionInfo[]>;
     // (undocumented)
@@ -9328,10 +10155,6 @@ export class ProtocolError extends LaserError {
     }, options?: {
         cause?: unknown;
     });
-    // (undocumented)
-    readonly commandCode: number | undefined;
-    // (undocumented)
-    readonly resultCode: number | undefined;
 }
 
 // @public (undocumented)
@@ -9365,6 +10188,28 @@ const PROVENANCE_FIELD_ID_START = 2000000000;
 
 // @public (undocumented)
 const PROVENANCE_FIELDS: readonly (readonly [number, string])[];
+
+// @public
+export class ProvenanceError extends LaserError {
+    // (undocumented)
+    static emptyValue(key: string): ProvenanceError;
+    static header(cause: unknown): ProvenanceError;
+    static id(cause: IdError): ProvenanceError;
+    // (undocumented)
+    static invalidValue(key: string): ProvenanceError;
+    // (undocumented)
+    static invalidValueBytes(key: string): ProvenanceError;
+    // (undocumented)
+    static malformedHeaders(detail: string): ProvenanceError;
+    // (undocumented)
+    static missingRequired(key: string): ProvenanceError;
+    // (undocumented)
+    static nonFinite(key: string): ProvenanceError;
+    // (undocumented)
+    static tooLarge(got: number, cap: number): ProvenanceError;
+    // (undocumented)
+    static valueTooLong(key: string, got: number, max: number): ProvenanceError;
+}
 
 // @public (undocumented)
 export function provenancePartitionKey(provenance: Provenance): string;
@@ -9463,8 +10308,39 @@ export type PublicCheckpointMutation = {
 };
 
 // @public (undocumented)
+export function publicCheckpointMutationRequiredCapability(mutation: PublicCheckpointMutation): readonly [Feature, Action];
+
+// @public
+export function publishCause(error: unknown): unknown;
+
+// @public
+export class PublishFailedError extends LaserError {
+    constructor(stream: string, topic: string, committed: readonly SendMessagesConfirmation[], unconfirmed: readonly MessageWithHeaders[], cause: unknown);
+    // (undocumented)
+    readonly committed: readonly SendMessagesConfirmation[];
+    publishCause(): unknown;
+    // (undocumented)
+    readonly stream: string;
+    // (undocumented)
+    readonly topic: string;
+    // Warning: (ae-forgotten-export) The symbol "MessageWithHeaders" needs to be exported by the entry point full.d.ts
+    //
+    // (undocumented)
+    readonly unconfirmed: readonly MessageWithHeaders[];
+}
+
+// @public (undocumented)
+export interface PublishOptions {
+    // (undocumented)
+    readonly maxRetries: number;
+    // (undocumented)
+    readonly retryBackoffMs: number;
+    // (undocumented)
+    readonly timeoutMs: number;
+}
+
+// @public (undocumented)
 export class PublishRequest {
-    constructor(topic: Topic);
     // (undocumented)
     arrowIpc(bytes: BytesLike, metadata: ArrowIpcMessageMetadata): this;
     // (undocumented)
@@ -9473,8 +10349,6 @@ export class PublishRequest {
     claimCheck(store: BlobStore, thresholdBytes: number): this;
     // (undocumented)
     contentType(value: ContentType): this;
-    // (undocumented)
-    encode<T>(value: T, codec: Codec<T>, contentType?: ContentType): this;
     // (undocumented)
     encodeWith<T>(value: T, codec: Codec<T>, contentType?: ContentType): this;
     // (undocumented)
@@ -9488,17 +10362,9 @@ export class PublishRequest {
     // (undocumented)
     json<T>(value: T, codec: Codec<T>): this;
     // (undocumented)
-    messagePack(value: unknown): this;
-    // (undocumented)
-    messagePack<T>(value: T, codec: Codec<T>): this;
-    // (undocumented)
-    metadata(key: string, value: string): this;
-    // (undocumented)
     msgpack(value: unknown): this;
     // (undocumented)
     msgpack<T>(value: T, codec: Codec<T>): this;
-    // (undocumented)
-    partition(id: number): this;
     // (undocumented)
     partitionKey(key: BytesLike): this;
     // (undocumented)
@@ -9515,14 +10381,15 @@ export class PublishRequest {
     send(): Promise<SendMessagesResponse>;
 }
 
-// @public (undocumented)
-export function publishStateDelta(laser: Laser, topic: string, source: AgentId, conversation: ConversationId, patch: unknown): Promise<void>;
+// @public
+export class QuarantinedError extends LaserError {
+    constructor(agent: string);
+    // (undocumented)
+    readonly agent: string;
+}
 
 // @public (undocumented)
-export function publishStateSnapshot(laser: Laser, topic: string, source: AgentId, conversation: ConversationId, state: unknown): Promise<void>;
-
-// @public (undocumented)
-interface Query {
+export interface Query {
     // (undocumented)
     readonly aggregate?: Aggregate;
     // (undocumented)
@@ -9608,6 +10475,22 @@ interface QueryCapabilities {
 }
 
 // @public (undocumented)
+export interface QueryCaps {
+    // (undocumented)
+    readonly available: boolean;
+    // (undocumented)
+    readonly cancellation: boolean;
+    // (undocumented)
+    readonly consistency: Consistency;
+    // (undocumented)
+    readonly cursorPaging: boolean;
+    // (undocumented)
+    readonly executionStatus: boolean;
+    // (undocumented)
+    readonly keyword: boolean;
+}
+
+// @public (undocumented)
 interface QueryCapsView {
     // (undocumented)
     readonly available: boolean;
@@ -9631,7 +10514,7 @@ interface QueryCapsView {
 const QueryCommand: ManagedCommand<QueryEnvelope, QueryReply>;
 
 // @public (undocumented)
-interface QueryContext {
+export interface QueryContext {
     // (undocumented)
     readonly boundary?: MaterializationBoundary;
     // (undocumented)
@@ -9746,7 +10629,7 @@ const queryExecutionPath: (id: QueryExecutionId) => string;
 type QueryExecutionState = "queued" | "planning" | "running" | "completed" | "cancelled" | "failed" | "expired";
 
 // @public (undocumented)
-interface QueryExecutionStatus {
+export interface QueryExecutionStatus {
     // (undocumented)
     readonly error?: QueryError;
     // (undocumented)
@@ -9817,18 +10700,15 @@ type QueryReply = {
 
 // @public (undocumented)
 export class QueryRequest {
-    // Warning: (ae-forgotten-export) The symbol "QueryExecutor" needs to be exported by the entry point full.d.ts
-    // Warning: (ae-forgotten-export) The symbol "QueryStatusExecutor" needs to be exported by the entry point full.d.ts
-    constructor(indexOrTarget: string | QueryTarget, execute: QueryExecutor, readStatus?: QueryStatusExecutor, cancelExecution?: QueryStatusExecutor);
     // (undocumented)
-    aggregateAs(func: AggFunc, alias: string, options?: {
+    aggAs(func: AggFunc, alias: string, options?: {
         readonly field?: string;
         readonly fraction?: number;
     }): this;
+    atSnapshot(snapshotId: bigint): this;
+    atTimestampMicros(timestampMicros: bigint): this;
     // (undocumented)
     avg(field: string, alias?: string): this;
-    // (undocumented)
-    byKey(field: string, value: string | TypedValue): this;
     // (undocumented)
     cancel(): Promise<QueryExecutionStatus>;
     // (undocumented)
@@ -9841,12 +10721,11 @@ export class QueryRequest {
     countDistinct(field: string, alias?: string): this;
     // (undocumented)
     cursor(value: string): this;
-    // (undocumented)
+    deadline(milliseconds: number): this;
     deadlineMicros(value: bigint): this;
     // (undocumented)
     distinct(): this;
-    // (undocumented)
-    executionId(value: QueryExecutionId): this;
+    executionId(): QueryExecutionId;
     // (undocumented)
     fetch(): Promise<QueryResult>;
     // (undocumented)
@@ -9913,12 +10792,13 @@ export class QueryRequest {
     readYourWrites(): this;
     // (undocumented)
     rows(): AsyncIterable<Row>;
+    rowsTyped<T>(codec: Codec<T>): AsyncIterable<T>;
     // (undocumented)
     selectFields(fields: readonly string[]): this;
     // (undocumented)
     status(): Promise<QueryExecutionStatus>;
     // (undocumented)
-    stdDev(field: string, alias?: string): this;
+    stddev(field: string, alias?: string): this;
     // (undocumented)
     sum(field: string, alias?: string): this;
     // (undocumented)
@@ -9950,7 +10830,19 @@ export interface QueryResult {
 }
 
 // @public (undocumented)
+export function queryResultFieldIndex(result: QueryResult, name: string): number | undefined;
+
+// @public (undocumented)
 export function queryResultValue(result: QueryResult, row: Row, name: string): TypedValue | undefined;
+
+// @public (undocumented)
+export function queryResultValueI64(result: QueryResult, row: Row, name: string): bigint | undefined;
+
+// @public (undocumented)
+export function queryResultValueText(result: QueryResult, row: Row, name: string): string | undefined;
+
+// @public (undocumented)
+export function queryResultValueU64(result: QueryResult, row: Row, name: string): bigint | undefined;
 
 // @public (undocumented)
 export interface QueryRoute {
@@ -10064,18 +10956,22 @@ export type QueryTarget = {
 
 // @public (undocumented)
 export class QuorumGovernor implements ActionGovernor {
-    constructor(required: "all" | "any" | number);
+    constructor(policy: QuorumPolicy);
     // (undocumented)
     decide(action: GovernedAction): Promise<ActionDecision>;
     // (undocumented)
     voter(name: string, governor: ActionGovernor, mandatory?: boolean): this;
 }
 
-// @public (undocumented)
-export function quorumOf(needed: number): GatherPolicy;
-
 // @public
-export function quorumSatisfied(policy: GatherPolicy, successes: number): boolean;
+export type QuorumPolicy = {
+    readonly kind: "all";
+} | {
+    readonly kind: "any";
+} | {
+    readonly kind: "at-least";
+    readonly required: number;
+};
 
 // @public (undocumented)
 interface RawSql {
@@ -10087,31 +10983,22 @@ interface RawSql {
     readonly sql: string;
 }
 
-// @public
-export const READER_TAG: unique symbol;
-
-// @public
-export interface ReaderTag {
-    // (undocumented)
-    readonly owner: object;
-    // (undocumented)
-    readonly sequence: number;
-}
+// @public (undocumented)
+export function readinessReasons(capabilities: Capabilities, resourceId: BackendResourceId): readonly BackendReadinessReason[] | undefined;
 
 // @public
 export type ReadMode = "primary" | "local";
 
 // @public (undocumented)
+export function readModeIsPrimary(mode: ReadMode): boolean;
+
+// @public (undocumented)
 export class RecallBuilder {
-    constructor(handle: MemoryHandle);
     // (undocumented)
     agent(agent: AgentId): this;
     // (undocumented)
     application(application: string): this;
-    // (undocumented)
-    block(): Promise<string>;
-    // (undocumented)
-    conversation(conversation: ConversationId): this;
+    block(tokenBudget?: number): Promise<string>;
     // (undocumented)
     fetch(): Promise<readonly MemoryItem[]>;
     folded(): this;
@@ -10129,8 +11016,6 @@ export class RecallBuilder {
     strategy(strategy: RecallStrategy): this;
     // (undocumented)
     stream(stream: string): this;
-    // (undocumented)
-    tokenBudget(tokenBudget: number): this;
     // (undocumented)
     user(user: string): this;
 }
@@ -10160,14 +11045,9 @@ export const RecallStrategy: {
 export type RecallStrategy = (typeof RecallStrategy)[keyof typeof RecallStrategy];
 
 // @public (undocumented)
-export function reconstructState(laser: Laser, conversation: ConversationId, topic: string): Promise<unknown>;
-
-// @public (undocumented)
 class Record_2 {
     // (undocumented)
     contentType(value: ContentType): this;
-    // (undocumented)
-    header(key: string, value: string): this;
     // (undocumented)
     index(key: string, value: string): this;
     // (undocumented)
@@ -10175,26 +11055,21 @@ class Record_2 {
     // (undocumented)
     logicalSchemaFingerprint(value: Uint8Array): this;
     // (undocumented)
+    metadata(key: string, value: string): this;
+    // (undocumented)
     projectionRef(value: string): this;
     // (undocumented)
     schemaId(value: number): this;
-    // Warning: (ae-forgotten-export) The symbol "RecordSnapshot" needs to be exported by the entry point full.d.ts
-    //
-    // (undocumented)
-    snapshot(): RecordSnapshot;
 }
 export { Record_2 as Record }
 
 // @public (undocumented)
-export interface RecordFault {
+interface RecordFault {
     // (undocumented)
     readonly offset: bigint;
     // (undocumented)
     readonly reason: FaultReason;
 }
-
-// @public (undocumented)
-export function recordHeaders(record: Record_2): ReadonlyMap<string, IggyHeaderValue>;
 
 // @public (undocumented)
 export class RecordId extends WireId<"RecordId"> {
@@ -10212,6 +11087,9 @@ export class RecordId extends WireId<"RecordId"> {
 export type RecordPolicy = "reject" | "pass";
 
 // @public (undocumented)
+export function recordPolicyIsReject(policy: RecordPolicy): boolean;
+
+// @public (undocumented)
 type RecreatedPartitionPolicy = "reject";
 
 // @public (undocumented)
@@ -10219,7 +11097,7 @@ export interface RegisteredCard {
     // (undocumented)
     readonly agent: AgentId;
     // (undocumented)
-    readonly card: AgentCard;
+    readonly card: AgentCard_2;
     // (undocumented)
     readonly observedAtMicros: bigint;
 }
@@ -10241,7 +11119,6 @@ const RegisterSchemaCommand: ManagedCommand<RegisterSchema, BrowseReply>;
 
 // @public (undocumented)
 export class RegisterSchemaRequest {
-    constructor(backend: BrowseBackend, getCapabilities: () => Promise<Capabilities>, source: SchemaSource);
     // (undocumented)
     name(name: string): this;
     // (undocumented)
@@ -10260,8 +11137,6 @@ export class RejectedError extends LaserError {
 // @public (undocumented)
 export class ReliableConsumer {
     constructor(options: ReliableConsumerOptions);
-    // (undocumented)
-    readonly options: ReliableConsumerOptions;
     // Warning: (ae-forgotten-export) The symbol "ReliableConsumerControl" needs to be exported by the entry point full.d.ts
     //
     // (undocumented)
@@ -10275,11 +11150,7 @@ export interface ReliableConsumerOptions {
     // (undocumented)
     readonly agent?: AgentId;
     // (undocumented)
-    readonly clock?: Clock;
-    // (undocumented)
     readonly concurrency?: ConcurrencyPolicy;
-    // (undocumented)
-    readonly deadLetterSink?: DeadLetterSink;
     // (undocumented)
     readonly deduplicator?: Deduplicator;
     // (undocumented)
@@ -10295,11 +11166,14 @@ export interface ReliableConsumerOptions {
     // (undocumented)
     readonly middleware?: readonly AgentMiddleware[];
     // (undocumented)
+    readonly onDeadLetter?: DeadLetterSink;
+    // (undocumented)
     readonly pollIntervalMs?: number;
     // (undocumented)
     readonly respondOn?: string;
     // (undocumented)
     readonly retry?: RetryPolicy;
+    readonly shutdownGraceMs?: number;
     // (undocumented)
     readonly signingKey?: SigningKey;
     // (undocumented)
@@ -10314,19 +11188,17 @@ export interface ReliableConsumerOptions {
 
 // @public (undocumented)
 export class RememberBuilder {
-    constructor(handle: MemoryHandle, payload: Uint8Array);
     // (undocumented)
     agent(agent: AgentId): this;
     // (undocumented)
     application(application: string): this;
-    // (undocumented)
-    conversation(conversation: ConversationId): this;
     // (undocumented)
     dedup(): this;
     // (undocumented)
     durable(): this;
     // (undocumented)
     kind(kind: MemoryKind): this;
+    scope(conversation: ConversationId): this;
     // (undocumented)
     send(): Promise<MemoryId>;
     // (undocumented)
@@ -10364,13 +11236,27 @@ export type ReplayBound = {
 };
 
 // @public (undocumented)
-export const REQUIRE_ALL: GatherPolicy;
-
-// @public (undocumented)
-export function requiredPrincipal(router: Router): PrincipalId | undefined;
-
-// @public (undocumented)
 export function requiring(envelope: AgentEnvelope, bits: bigint): AgentEnvelope;
+
+// @public
+export class RerankedMemory implements Memory {
+    // (undocumented)
+    [RERANKED](): {
+        readonly inner: Memory;
+        readonly reranker: Reranker;
+    };
+    constructor(inner: Memory, reranker: Reranker);
+    // (undocumented)
+    append(scope: MemoryScope, id: MemoryId, kind: MemoryKind, payload: Uint8Array): Promise<MemoryId>;
+    // (undocumented)
+    forget(scope: MemoryScope, id: MemoryId): Promise<void>;
+    // (undocumented)
+    improve(scope: MemoryScope, feedback: Feedback): Promise<MemoryId>;
+    // (undocumented)
+    recall(scope: MemoryScope, query: MemoryQuery): Promise<readonly MemoryItem[]>;
+    // (undocumented)
+    remember(scope: MemoryScope, payload: Uint8Array): Promise<MemoryId>;
+}
 
 // @public (undocumented)
 export interface Reranker {
@@ -10380,6 +11266,22 @@ export interface Reranker {
 
 // @public (undocumented)
 export function resolveBody(store: BlobStore, payload: Uint8Array): Promise<Uint8Array>;
+
+// @public (undocumented)
+interface ResolvedFilterPolicy {
+    // (undocumented)
+    readonly digest: Uint8Array;
+    // (undocumented)
+    readonly filter: ConsumerFilter;
+    // (undocumented)
+    readonly filterId: number;
+    // (undocumented)
+    readonly policyGeneration: bigint;
+    // (undocumented)
+    readonly revision: number;
+    // (undocumented)
+    readonly state: FilterState;
+}
 
 // @public (undocumented)
 type ResolvedQueryTarget = {
@@ -10404,6 +11306,16 @@ type ResolvedQueryTarget = {
 };
 
 // @public (undocumented)
+interface ResolveFilterPolicy {
+    // (undocumented)
+    readonly allowDisabled?: boolean;
+    // (undocumented)
+    readonly policy: FilterPolicyRef;
+    // (undocumented)
+    readonly v: number;
+}
+
+// @public (undocumented)
 export function resolveInboxRoute(route: InboxRoute, agent: AgentId, advertised: string | undefined): string;
 
 // Warning: (ae-forgotten-export) The symbol "RegistryView" needs to be exported by the entry point full.d.ts
@@ -10423,22 +11335,22 @@ export interface ResourcePattern {
 }
 
 // @public (undocumented)
-function resourcePatternAll(): ResourcePattern;
+export function resourcePatternAll(): ResourcePattern;
 
 // @public (undocumented)
-function resourcePatternLiteral(value: string): ResourcePattern;
+export function resourcePatternLiteral(value: string): ResourcePattern;
 
 // @public (undocumented)
-function resourcePatternMatches(pattern: ResourcePattern, resource?: string): boolean;
+export function resourcePatternMatches(pattern: ResourcePattern, resource?: string): boolean;
 
 // @public (undocumented)
-function resourcePatternPrefix(value: string): ResourcePattern;
+export function resourcePatternPrefix(value: string): ResourcePattern;
 
 // @public (undocumented)
-function responseEnvelope(record: RecordId, conversation: WireConversationId, source: AgentId_2, correlation: CorrelationId, body: Uint8Array): AgentEnvelope;
+export function responseEnvelope(record: RecordId, conversation: ConversationId_2, source: AgentId_2, correlation: CorrelationId, body: Uint8Array): AgentEnvelope;
 
 // @public (undocumented)
-type ResultCode = {
+export type ResultCode = {
     readonly kind: "known";
     readonly name: keyof typeof ResultCodeName;
 } | {
@@ -10447,13 +11359,13 @@ type ResultCode = {
 };
 
 // @public (undocumented)
-function resultCodeFromCode(code: number): ResultCode;
+export function resultCodeFromCode(code: number): ResultCode;
 
 // @public
 function resultCodeFromWord(word: string): ResultCode | undefined;
 
 // @public (undocumented)
-function resultCodeHttpStatus(value: ResultCode): number;
+export function resultCodeHttpStatus(value: ResultCode): number;
 
 // @public
 function resultCodeIsRetryable(value: ResultCode): boolean;
@@ -10521,9 +11433,6 @@ export type RetentionPolicy = {
 export function retryBackoff(maxAttempts: number, baseDelayMs: number): RetryPolicy;
 
 // @public (undocumented)
-export function retryDelayMs(policy: RetryPolicy, attempt: number): number;
-
-// @public (undocumented)
 export interface RetryPolicy {
     // (undocumented)
     readonly baseDelayMs: number;
@@ -10537,6 +11446,14 @@ export interface Role {
     readonly grants: readonly Grant[];
     // (undocumented)
     readonly name: string;
+}
+
+// @public
+interface RoleBinding {
+    // (undocumented)
+    readonly roles: readonly string[];
+    // (undocumented)
+    readonly userId: number;
 }
 
 // @public (undocumented)
@@ -10583,6 +11500,17 @@ export type RoutePolicy = {
 };
 
 // @public (undocumented)
+export class RoutePrincipalMismatchError extends LaserError {
+    constructor(agent: string, expected: number, actual?: number | undefined);
+    // (undocumented)
+    readonly actual?: number | undefined;
+    // (undocumented)
+    readonly agent: string;
+    // (undocumented)
+    readonly expected: number;
+}
+
+// @public (undocumented)
 export type Router = {
     readonly kind: "to";
     readonly agent: AgentId;
@@ -10601,9 +11529,6 @@ export type Router = {
 };
 
 // @public (undocumented)
-export function routeRequiresPresence(router: Router): boolean;
-
-// @public (undocumented)
 export interface RouteScorer {
     // (undocumented)
     select(skillId: string, candidates: readonly RouteCandidate[]): number | undefined;
@@ -10618,6 +11543,24 @@ export function routeToCapable(skill: string, policy: RoutePolicy): Router;
 // @public (undocumented)
 export function routeToPrincipal(agent: AgentId, principal: PrincipalId): Router;
 
+// @public
+export type Routing = {
+    readonly kind: "balanced";
+} | {
+    readonly kind: "key";
+    readonly key: Uint8Array;
+} | {
+    readonly kind: "partition";
+    readonly partition: number;
+};
+
+// @public (undocumented)
+export const Routing: {
+    readonly balanced: Routing;
+    readonly key: (value: BytesLike) => Routing;
+    readonly partition: (id: number) => Routing;
+};
+
 // @public (undocumented)
 export interface Row {
     // (undocumented)
@@ -10627,7 +11570,7 @@ export interface Row {
 }
 
 // @public (undocumented)
-export interface RunBudget {
+interface RunBudget {
     // (undocumented)
     readonly maxCostUsd?: number;
     // (undocumented)
@@ -10649,8 +11592,6 @@ const runCancelPath: (id: string) => string;
 
 // @public (undocumented)
 export class RunListRequest {
-    // Warning: (ae-forgotten-export) The symbol "RunsBackend" needs to be exported by the entry point full.d.ts
-    constructor(backend: RunsBackend, getCapabilities: () => Promise<Capabilities>);
     // (undocumented)
     agent(agentId: string): this;
     // (undocumented)
@@ -10676,7 +11617,6 @@ const runPath: (id: string) => string;
 
 // @public (undocumented)
 export class Runs {
-    constructor(backend: RunsBackend, getCapabilities: () => Promise<Capabilities>, publishControl: PublishControl);
     // (undocumented)
     cancel(runId: string): Promise<AgentRunInfo>;
     // (undocumented)
@@ -10691,12 +11631,17 @@ export class Runs {
     submit(agentId: string, input?: Uint8Array): Promise<AgentRunInfo>;
     // (undocumented)
     submitBudgeted(agentId: string, budget: RunBudget, input?: Uint8Array): Promise<AgentRunInfo>;
+    // Warning: (ae-forgotten-export) The symbol "SubmitOptions" needs to be exported by the entry point full.d.ts
+    //
     // (undocumented)
     submitWith(agentId: string, options?: SubmitOptions): Promise<AgentRunInfo>;
 }
 
 // @public (undocumented)
 const RUNS_PATH = "/agdx/runs";
+
+// @public (undocumented)
+function rustDouble(value: number): string;
 
 // @public (undocumented)
 export interface ScatterOutcome {
@@ -10758,6 +11703,17 @@ export interface SchemaDef {
 }
 
 // @public (undocumented)
+export function schemaDefContentType(schema: SchemaDef): ContentType;
+
+// @public (undocumented)
+export const SchemaFingerprint: {
+    readonly BYTES: 32;
+};
+
+// @public (undocumented)
+export type SchemaFingerprint = Uint8Array;
+
+// @public (undocumented)
 export interface SchemaInfo {
     // (undocumented)
     readonly dropped: boolean;
@@ -10770,7 +11726,6 @@ const schemaPath: (id: number) => string;
 
 // @public (undocumented)
 export class Schemas {
-    constructor(backend: BrowseBackend, getCapabilities: () => Promise<Capabilities>, publishControl: PublishControl);
     // (undocumented)
     drop(id: number): Promise<void>;
     // (undocumented)
@@ -10801,12 +11756,13 @@ export type SchemaSource = {
 
 // @public (undocumented)
 export class ScopedMemory {
-    constructor(handle: MemoryHandle, conversation: ConversationId);
+    block(tokenBudget?: number): Promise<string>;
+    consolidate(maxItems: number, options?: ConsolidateOptions): Promise<ConsolidationReport>;
     // (undocumented)
-    context(tokenBudget?: number): Promise<string>;
-    // (undocumented)
+    readonly conversation: ConversationId;
     forget(id: MemoryId): Promise<void>;
     // (undocumented)
+    readonly handle: MemoryHandle;
     improve(feedback: Feedback): Promise<MemoryId>;
     // (undocumented)
     recall(): RecallBuilder;
@@ -10816,9 +11772,6 @@ export class ScopedMemory {
 }
 
 // @public (undocumented)
-export const SDK_VERSION = "0.5.3";
-
-// @public (undocumented)
 interface Select {
     // (undocumented)
     readonly fields: readonly string[];
@@ -10826,19 +11779,15 @@ interface Select {
     readonly payload: boolean;
 }
 
-// @public (undocumented)
-export function selectRoute(skillId: string, candidates: readonly RegisteredCard[], policy: RoutePolicy): AgentId | undefined;
-
 export { SendMessagesConfirmation }
 
 export { SendMessagesResponse }
 
 // @public (undocumented)
-export const SERIAL_CONCURRENCY: ConcurrencyPolicy;
+export function servesConsistency(capabilities: Capabilities, level: Consistency): boolean;
 
 // @public
 export class Session {
-    constructor(scope: ContextScope, config?: SessionConfig);
     // (undocumented)
     append(kind: SessionTurnKind, data: BytesLike): Promise<void>;
     checkpoint(): Promise<Checkpoint>;
@@ -10859,36 +11808,20 @@ export class Session {
     turnsSince(checkpoint: Checkpoint): Promise<readonly SessionTurn[]>;
 }
 
-// @public (undocumented)
-export class SessionConfig {
-    constructor(options?: SessionOptions);
-    // (undocumented)
-    readonly contextTokens: number;
-    // (undocumented)
-    readonly contextTurns: number;
-    kindFor(topic: string): SessionTurnKind | undefined;
-    // (undocumented)
-    readonly memoryNamespace: string;
-    // (undocumented)
-    readonly stream: string | undefined;
-    topicFor(kind: SessionTurnKind): string;
-    get topicList(): readonly string[];
-    // (undocumented)
-    readonly topics: Readonly<Record<SessionTurnKind, string>>;
-}
-
 // @public
-export interface SessionOptions {
-    // (undocumented)
-    readonly contextTokens?: number;
-    // (undocumented)
-    readonly contextTurns?: number;
-    // (undocumented)
-    readonly memoryNamespace?: string;
-    // (undocumented)
-    readonly stream?: string;
-    // (undocumented)
-    readonly topics?: Partial<Readonly<Record<SessionTurnKind, string>>>;
+export class SessionConfig {
+    get contextTokenBound(): number;
+    contextTokens(tokens: number): SessionConfig;
+    get contextTurnBound(): number;
+    contextTurns(turns: number): SessionConfig;
+    kindFor(topic: string): SessionTurnKind | undefined;
+    memoryNamespace(namespace: string): SessionConfig;
+    get memoryNamespaceName(): string;
+    stream(stream: string): SessionConfig;
+    get streamName(): string | undefined;
+    topic(kind: SessionTurnKind, topic: string): SessionConfig;
+    topicFor(kind: SessionTurnKind): string;
+    topics(): readonly string[];
 }
 
 // @public (undocumented)
@@ -10896,7 +11829,6 @@ export type SessionPolicy = "perCall" | "perUser";
 
 // @public
 export class Sessions {
-    constructor(laser: Laser, options?: SessionOptions);
     // (undocumented)
     readonly config: SessionConfig;
     create(id: string): Session;
@@ -10925,7 +11857,7 @@ export function sessionTurnText(turn: SessionTurn): string;
 export function sessionTurnTopic(kind: SessionTurnKind): string;
 
 // @public (undocumented)
-interface Signature {
+export interface Signature {
     // (undocumented)
     readonly bytes: Uint8Array;
     // (undocumented)
@@ -10961,9 +11893,6 @@ export class SignatureError extends LaserError {
 export function signCardValue(key: SigningKey, card: unknown): AgentCardSignature;
 
 // @public (undocumented)
-export function signingInput(envelope: AgentEnvelope, context?: SignatureContext): Uint8Array;
-
-// @public (undocumented)
 export class SigningKey {
     // (undocumented)
     static fromBytes(secret: Uint8Array): SigningKey;
@@ -10971,8 +11900,6 @@ export class SigningKey {
     keyId(): Uint8Array;
     // (undocumented)
     sign(envelope: AgentEnvelope): Signature;
-    // (undocumented)
-    signBytes(payload: Uint8Array): Uint8Array;
     // (undocumented)
     signWithContext(envelope: AgentEnvelope, context: SignatureContext): Signature;
     // (undocumented)
@@ -10998,7 +11925,7 @@ interface SnapshotPageView {
 }
 
 // @public (undocumented)
-type SnapshotSelector = {
+export type SnapshotSelector = {
     readonly kind: "snapshot_id";
     readonly value: bigint;
 } | {
@@ -11081,7 +12008,7 @@ interface SourcePartitionCut {
 }
 
 // @public (undocumented)
-type SourceRef = {
+export type SourceRef = {
     readonly kind: "message";
     readonly stream: number;
     readonly topic: number;
@@ -11120,7 +12047,7 @@ export interface SpanScope {
 }
 
 // @public (undocumented)
-type SqlDialect = "data_fusion" | "postgres" | "my_sql" | "sqlite";
+export type SqlDialect = "data_fusion" | "postgres" | "my_sql" | "sqlite";
 
 // @public (undocumented)
 type StartPolicy = {
@@ -11148,20 +12075,25 @@ export class StateStoreError extends LaserError {
 }
 
 // @public (undocumented)
-function statusEnvelope(record: RecordId, conversation: WireConversationId, source: AgentId_2, operation: string): AgentEnvelope;
+export function statusEnvelope(record: RecordId, conversation: ConversationId_2, source: AgentId_2, operation: string): AgentEnvelope;
 
 // @public (undocumented)
-export class StepBuilder {
-    // Warning: (ae-forgotten-export) The symbol "Step" needs to be exported by the entry point full.d.ts
-    constructor(owner: Workflow, current: Step);
+export interface StepContext {
+    // (undocumented)
+    readonly outputs: ReadonlyMap<string, Uint8Array>;
+}
+
+// @public (undocumented)
+export type StepFn = (context: StepContext) => BytesLike | Promise<BytesLike>;
+
+// @public (undocumented)
+export class StepHandle {
     // (undocumented)
     after(label: string): this;
     // (undocumented)
     budget(budget: Budget): this;
     // (undocumented)
     compensateWith(compensation: StepFn): this;
-    // (undocumented)
-    done(): Workflow;
     // (undocumented)
     exclusive(): this;
     // (undocumented)
@@ -11173,23 +12105,16 @@ export class StepBuilder {
     // (undocumented)
     registered(): this;
     // (undocumented)
-    run(options?: WorkflowRunOptions): Promise<WorkflowOutcome>;
+    run(options?: {
+        readonly signal?: AbortSignal;
+    }): Promise<WorkflowOutcome>;
     // (undocumented)
     runId(runId: ConversationId): this;
     // (undocumented)
-    step(label: string, target: Router, build: StepFn): StepBuilder;
+    step(label: string, target: Router, build: StepFn): StepHandle;
     // (undocumented)
-    verifyWith(verifier: WorkflowVerifier): this;
+    verifyWith(verifier: Verifier): this;
 }
-
-// @public (undocumented)
-export interface StepContext {
-    // (undocumented)
-    readonly outputs: ReadonlyMap<string, Uint8Array>;
-}
-
-// @public (undocumented)
-export type StepFn = (context: StepContext) => BytesLike | Promise<BytesLike>;
 
 // @public (undocumented)
 export class StepUpRequiredError extends LaserError {
@@ -11221,12 +12146,16 @@ interface StoredKeyRecord {
     readonly verifyingKey: Uint8Array;
 }
 
+// @public
+export interface StoredOffset {
+    // (undocumented)
+    readonly currentOffset: bigint;
+    // (undocumented)
+    readonly storedOffset: bigint;
+}
+
 // @public (undocumented)
 export class Stream {
-    // Warning: (ae-forgotten-export) The symbol "GovernPublish" needs to be exported by the entry point full.d.ts
-    // Warning: (ae-forgotten-export) The symbol "ResolveSchema" needs to be exported by the entry point full.d.ts
-    // Warning: (ae-forgotten-export) The symbol "ObserveEffect" needs to be exported by the entry point full.d.ts
-    constructor(transport: LaserTransport, name: string, govern?: GovernPublish | undefined, resolveSchema?: ResolveSchema | undefined, observe?: ObserveEffect | undefined, onDelete?: (() => void) | undefined, groups?: GroupContext | undefined);
     delete(): Promise<boolean>;
     // (undocumented)
     ensure(): Promise<void>;
@@ -11251,16 +12180,10 @@ export type StreamEvent = {
     readonly body: Uint8Array;
 };
 
-// @public (undocumented)
-export interface SubmitOptions {
+// @public
+export interface Summarizer {
     // (undocumented)
-    readonly budget?: RunBudget;
-    // (undocumented)
-    readonly input?: Uint8Array;
-    // (undocumented)
-    readonly params?: ReadonlyMap<string, string>;
-    // (undocumented)
-    readonly runId?: string;
+    summarize(bodies: readonly Uint8Array[]): Promise<Uint8Array>;
 }
 
 // @public (undocumented)
@@ -11275,18 +12198,7 @@ const SUPERVISOR_ASSERTION_VERSION = 1;
 // @public (undocumented)
 interface SupervisorActorAssertion {
     // (undocumented)
-    readonly claims: {
-        readonly v: number;
-        readonly requestId: CheckpointRequestId;
-        readonly deploymentId: number;
-        readonly cloudUserId: number;
-        readonly action: "accept_retention_gap" | "supersede_generation" | "record_repair";
-        readonly destinationId: DestinationId;
-        readonly destinationGeneration: bigint;
-        readonly expectedRevision?: bigint;
-        readonly issuedAtMicros: bigint;
-        readonly expiresAtMicros: bigint;
-    };
+    readonly claims: SupervisorActorClaims;
     // (undocumented)
     readonly keyId: Uint8Array;
     // (undocumented)
@@ -11294,12 +12206,39 @@ interface SupervisorActorAssertion {
 }
 
 // @public (undocumented)
+interface SupervisorActorClaims {
+    // (undocumented)
+    readonly action: SupervisorAssertionAction;
+    // (undocumented)
+    readonly cloudUserId: number;
+    // (undocumented)
+    readonly deploymentId: number;
+    // (undocumented)
+    readonly destinationGeneration: bigint;
+    // (undocumented)
+    readonly destinationId: DestinationId;
+    // (undocumented)
+    readonly expectedRevision?: bigint;
+    // (undocumented)
+    readonly expiresAtMicros: bigint;
+    // (undocumented)
+    readonly issuedAtMicros: bigint;
+    // (undocumented)
+    readonly requestId: CheckpointRequestId;
+    // (undocumented)
+    readonly v: number;
+}
+
+// @public (undocumented)
+type SupervisorAssertionAction = "accept_retention_gap" | "supersede_generation" | "record_repair";
+
+// @public (undocumented)
 export class SwappableGovernor implements ActionGovernor {
-    constructor(current: ActionGovernor);
+    constructor(active: ActionGovernor);
+    current(): ActionGovernor;
     // (undocumented)
     decide(action: GovernedAction): Promise<ActionDecision>;
-    // (undocumented)
-    swap(governor: ActionGovernor): void;
+    swap(governor: ActionGovernor): ActionGovernor;
 }
 
 // @public (undocumented)
@@ -11423,7 +12362,17 @@ interface TableView {
 const TARGET_AGENT_ID = "agdx.to";
 
 // @public (undocumented)
-export function taskFromEnvelope(taskId: string, envelope: AgentEnvelope): A2aTask;
+export interface Task {
+    // (undocumented)
+    readonly artifacts: readonly Artifact[];
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly status: TaskStatus;
+}
+
+// @public (undocumented)
+export function taskFromEnvelope(taskId: string, envelope: AgentEnvelope): Task;
 
 // @public (undocumented)
 export type TaskState = {
@@ -11444,10 +12393,10 @@ function taskStateDisplay(state: TaskState): string;
 export function taskStateFromCode(code: number): TaskState;
 
 // @public (undocumented)
-function taskStateIsTerminal(state: TaskState): boolean;
+export function taskStateIsTerminal(state: TaskState): boolean;
 
 // @public (undocumented)
-export const TaskStateName: {
+const TaskStateName: {
     readonly Submitted: 1;
     readonly Working: 2;
     readonly InputRequired: 3;
@@ -11460,10 +12409,13 @@ export const TaskStateName: {
 };
 
 // @public (undocumented)
-export function taskToJson(task: A2aTask): unknown;
+export interface TaskStatus {
+    // (undocumented)
+    readonly state: TaskState;
+}
 
 // @public (undocumented)
-function terminal(envelope: AgentEnvelope, finishReason: string): AgentEnvelope;
+export function terminal(envelope: AgentEnvelope, finishReason: string): AgentEnvelope;
 
 // @public (undocumented)
 export class TestClock implements Clock {
@@ -11480,6 +12432,21 @@ export class TestClock implements Clock {
 export type TextMatch = "equals" | "prefix" | "suffix" | "contains" | "glob" | "regex";
 
 // @public
+class TextMatcher {
+    constructor(kind: TextMatch, source: string, caseInsensitive: boolean);
+    // (undocumented)
+    readonly kind: TextMatch;
+    // (undocumented)
+    label(): string;
+    // (undocumented)
+    matches(text: string): boolean;
+    // (undocumented)
+    static of(predicate: TextPredicate): TextMatcher;
+    // (undocumented)
+    readonly source: string;
+}
+
+// @public
 export interface TextPredicate {
     // (undocumented)
     readonly caseInsensitive?: boolean;
@@ -11490,6 +12457,9 @@ export interface TextPredicate {
     // (undocumented)
     readonly pattern: string;
 }
+
+// @public (undocumented)
+export function textPredicateValidate(predicate: TextPredicate): void;
 
 // @public (undocumented)
 interface TextQuery {
@@ -11509,6 +12479,12 @@ export class TimeoutError extends LaserError {
 // @public
 export type TimestampFormat = "rfc3339" | "epoch_seconds" | "epoch_millis" | "epoch_micros";
 
+// @public
+export function timestampFormatMicrosFromInteger(format: TimestampFormat, value: bigint): bigint | undefined;
+
+// @public
+export function timestampFormatMicrosFromText(format: TimestampFormat, text: string): bigint | undefined;
+
 // @public (undocumented)
 type TimeTravelCapability = "snapshot_id" | "timestamp_micros";
 
@@ -11519,13 +12495,11 @@ export function toContextBlock(items: readonly MemoryItem[], tokenBudget?: numbe
 export class TokenBudget implements ContextPolicy {
     constructor(maxTokens: number, estimate?: (message: ContextMessage) => number);
     // (undocumented)
-    readonly maxTokens: number;
-    // (undocumented)
     select(history: readonly ContextMessage[]): readonly ContextMessage[];
 }
 
 // @public (undocumented)
-export interface TokenUsage {
+interface TokenUsage {
     // (undocumented)
     readonly cacheCreationInputTokens?: bigint;
     // (undocumented)
@@ -11538,14 +12512,16 @@ export interface TokenUsage {
     readonly reasoningOutputTokens?: bigint;
 }
 
+// @public
+export function toolCallFromRequest(record: RecordId, conversation: ConversationId_2, source: AgentId_2, correlation: CorrelationId, toolName: string, paramsJson: Uint8Array): AgentEnvelope;
+
 // @public (undocumented)
 export function toolResultFromEnvelope(envelope: AgentEnvelope): McpToolResult;
 
 // @public (undocumented)
 export class Topic {
-    constructor(transport: LaserTransport, streamName: string, name: string, govern?: GovernPublish | undefined, resolveSchema?: ResolveSchema | undefined, observe?: ObserveEffect | undefined, groups?: GroupContext | undefined);
-    // (undocumented)
-    batch(payloads: readonly BytesLike[], options?: RawSendOptions): Promise<SendMessagesResponse>;
+    batch(messages: readonly (BytesLike | MessageWithHeaders)[], options?: RawSendOptions): Promise<SendMessagesResponse>;
+    batching(): BatchingProducerBuilder;
     // (undocumented)
     cbor<T>(codec: Codec<T>): TypedTopic<T>;
     // (undocumented)
@@ -11554,13 +12530,12 @@ export class Topic {
     consumer(name: string, partitionId: number, options?: ConsumerOptions): Consumer;
     consumerGroup(name: string): ConsumerGroup;
     consumerGroupId(id: bigint | number): ConsumerGroup;
-    ensure(partitions?: number, options?: TopicEnsureOptions): Promise<void>;
+    ensure(partitions?: number): Promise<void>;
     ensureConsumerGroup(name: string): Promise<void>;
     // (undocumented)
     json<T>(codec: Codec<T>): TypedTopic<T>;
     // (undocumented)
     readonly name: string;
-    partitionCount(): Promise<number | undefined>;
     // (undocumented)
     producer(options?: ProducerOptions): Producer;
     // (undocumented)
@@ -11568,52 +12543,28 @@ export class Topic {
     // (undocumented)
     publishBatch(): BatchPublishRequest;
     // (undocumented)
-    replay(options?: CursorOptions): Promise<Cursor>;
+    replay(): Promise<Cursor>;
     // (undocumented)
-    schema<T>(schemaId: number, codecOrDecoder: Codec<T> | ValueDecoder<T>): Promise<TypedTopic<T>>;
+    schema<T>(schemaId: number, codecOrDecoder: Codec<T> | ((value: unknown) => T)): Promise<TypedTopic<T>>;
     // Warning: (ae-forgotten-export) The symbol "RawSendOptions" needs to be exported by the entry point full.d.ts
     //
     // (undocumented)
     send(payload: BytesLike, options?: RawSendOptions): Promise<SendMessagesResponse>;
-    // Warning: (ae-forgotten-export) The symbol "MessageWithHeaders" needs to be exported by the entry point full.d.ts
-    //
-    // (undocumented)
-    sendRecords(records: readonly MessageWithHeaders[], options?: {
-        readonly key?: Uint8Array;
-        readonly partition?: number;
-    }): Promise<SendMessagesResponse>;
-    // (undocumented)
-    readonly streamName: string;
-    tailOffsets(): Promise<ReadonlyMap<number, bigint>>;
-}
-
-// @public (undocumented)
-export interface TopicEnsureOptions {
-    // (undocumented)
-    readonly messageExpiryMicros?: bigint;
 }
 
 // @public (undocumented)
 export class TopicSnapshotStore implements SnapshotStore {
     constructor(laser: Laser, topic?: string);
-    // (undocumented)
     latest(conversation: ConversationId): Promise<FoldSnapshot | undefined>;
     // (undocumented)
     save(snapshot: FoldSnapshot): Promise<void>;
-    // (undocumented)
-    readonly topic: string;
 }
-
-// @public (undocumented)
-export function topologicalOrder(steps: readonly Pick<Step, "label" | "after">[]): readonly number[];
 
 // @public (undocumented)
 export class TransportError extends LaserError {
     constructor(message: string, retryable: boolean, options?: {
         cause?: unknown;
     });
-    // (undocumented)
-    readonly retryable: boolean;
 }
 
 // @public (undocumented)
@@ -11624,33 +12575,19 @@ export class TypedDecodeError extends LaserError {
     constructor(message: string, position: {
         readonly partitionId: number;
         readonly offset: bigint;
-    } | undefined, options?: {
-        cause?: unknown;
-    });
+    } | undefined, source: LaserError);
     // (undocumented)
     readonly position: {
         readonly partitionId: number;
         readonly offset: bigint;
     } | undefined;
+    readonly source: LaserError;
 }
-
-// @public (undocumented)
-export type TypedPollResult<T> = {
-    readonly kind: "record";
-    readonly record: TypedRecord<T>;
-} | {
-    readonly kind: "error";
-    readonly error: TypedDecodeError;
-};
 
 // @public (undocumented)
 export interface TypedRecord<T> {
     // (undocumented)
-    readonly headers: ReadonlyMap<string, IggyHeaderValue>;
-    // (undocumented)
-    readonly offset: bigint;
-    // (undocumented)
-    readonly partitionId: number;
+    readonly headers: ReadonlyMap<string, HeaderValue>;
     // (undocumented)
     readonly position: MessageId;
     // (undocumented)
@@ -11659,13 +12596,14 @@ export interface TypedRecord<T> {
 
 // @public (undocumented)
 export class TypedRecords<T> {
-    constructor(cursor: Cursor, codec: Codec<T>, compiled?: CompiledSchema | undefined);
     // (undocumented)
     batch(size: number): this;
     // (undocumented)
     fromOffsets(offsets: ReadonlyMap<number, bigint>): this;
     // (undocumented)
     get offsets(): ReadonlyMap<number, bigint>;
+    // Warning: (ae-forgotten-export) The symbol "TypedPollResult" needs to be exported by the entry point full.d.ts
+    //
     // (undocumented)
     poll(options?: {
         readonly signal?: AbortSignal;
@@ -11679,20 +12617,14 @@ export class TypedRecords<T> {
 
 // @public (undocumented)
 export class TypedTopic<T> {
-    // Warning: (ae-forgotten-export) The symbol "TypedContract" needs to be exported by the entry point full.d.ts
-    constructor(topic: Topic, codec: Codec<T>, kind: TypedTopicKind, contract?: TypedContract);
-    // (undocumented)
-    readonly kind: TypedTopicKind;
     // (undocumented)
     publish(value: T, options?: RawSendOptions): Promise<SendMessagesResponse>;
     // (undocumented)
     publishBatch(values: readonly T[], options?: RawSendOptions): Promise<SendMessagesResponse>;
     // (undocumented)
-    records(readerName: string, options?: CursorOptions): Promise<TypedRecords<T>>;
+    records(readerName: string): Promise<TypedRecords<T>>;
+    readonly topic: Topic;
 }
-
-// @public (undocumented)
-export type TypedTopicKind = "json" | "cbor" | "schema";
 
 // @public (undocumented)
 export type TypedValue = {
@@ -11719,8 +12651,11 @@ export type TypedValue = {
     readonly kind: "string";
     readonly value: string;
 } | {
-    readonly kind: "uuid" | "fixed" | "binary";
-    readonly value: Uint8Array;
+    readonly kind: "uuid";
+    readonly value: UuidValue;
+} | {
+    readonly kind: "fixed" | "binary";
+    readonly value: BinaryValue;
 } | {
     readonly kind: "struct";
     readonly value: readonly FieldValue[];
@@ -11733,24 +12668,43 @@ export type TypedValue = {
 };
 
 // @public (undocumented)
+export function typedValueAsI64(value: TypedValue): bigint | undefined;
+
+// @public (undocumented)
+export function typedValueAsStr(value: TypedValue): string | undefined;
+
+// @public (undocumented)
+export function typedValueAsU64(value: TypedValue): bigint | undefined;
+
+// @public (undocumented)
 export function typedValueDiagnosticText(value: TypedValue): string;
 
 // @public (undocumented)
-export interface UlidSource {
-    // (undocumented)
-    fillRandom(bytes: Uint8Array): void;
-    // (undocumented)
-    nowMilliseconds(): number;
-}
+export function typedValueValidateAgainst(value: TypedValue, logicalType: LogicalType, required: boolean): void;
+
+// @public (undocumented)
+export function typedValueValidateCanonical(value: TypedValue): void;
 
 // @public (undocumented)
 export function unmetRequirements(envelope: AgentEnvelope, understood: bigint): bigint;
 
 // @public (undocumented)
+function unportableRegexConstruct(pattern: string): string | undefined;
+
+// @public (undocumented)
+export function unreadyBackends(capabilities: Capabilities): readonly BackendDescriptor[];
+
+// @public
 export class UnsupportedError extends LaserError {
     constructor(message: string, options?: {
         cause?: unknown;
+        surface?: string;
+        feature?: string;
     });
+    // (undocumented)
+    readonly feature: string | undefined;
+    // (undocumented)
+    readonly surface: string | undefined;
 }
 
 // @public (undocumented)
@@ -11760,13 +12714,24 @@ const USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens";
 const USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens";
 
 // @public (undocumented)
-function validateAgentCard(card: AgentCard): void;
+function usesRegex(expr: FilterExpr): boolean;
+
+// @public (undocumented)
+export const UuidValue: {
+    readonly BYTES: 16;
+};
+
+// @public (undocumented)
+export type UuidValue = Uint8Array;
+
+// @public (undocumented)
+function validateAgentCard(card: AgentCard_2): void;
 
 // @public (undocumented)
 function validateAgentEnvelope(envelope: AgentEnvelope): void;
 
 // @public (undocumented)
-function validateAgentPresence(presence: AgentPresence): void;
+export function validateAgentPresence(presence: AgentPresence): void;
 
 // @public (undocumented)
 function validateArrowIpcMetadata(metadata: ArrowIpcMessageMetadata): void;
@@ -11781,6 +12746,9 @@ function validateBackendDescriptor(value: BackendDescriptor): void;
 function validateBodyRef(ref: BodyRef): void;
 
 // @public (undocumented)
+function validateCatalogPage(page: number, pageSize: number): void;
+
+// @public (undocumented)
 function validateCheckpointMutationResult(value: CheckpointMutationResult): void;
 
 // @public (undocumented)
@@ -11788,6 +12756,9 @@ function validateCheckpointReadReply(value: CheckpointReadReply): void;
 
 // @public (undocumented)
 function validateCheckpointRequest(value: CheckpointRequestEnvelope): void;
+
+// @public (undocumented)
+function validateConsumerFilter(filter: ConsumerFilter): void;
 
 // @public (undocumented)
 function validateDestinationCheckpointStatus(value: DestinationCheckpointStatus): void;
@@ -11800,6 +12771,47 @@ function validateDestinationGetRequest(value: DestinationGetRequest): void;
 
 // @public (undocumented)
 function validateDestinationListRequest(value: DestinationListRequest): void;
+
+// @public
+type ValidateError = {
+    readonly kind: "missing";
+    readonly agentKind: AgentKind;
+    readonly field: string;
+} | {
+    readonly kind: "forbidden";
+    readonly agentKind: AgentKind;
+    readonly field: string;
+} | {
+    readonly kind: "tooLarge";
+    readonly field: string;
+    readonly size: number;
+    readonly cap: number;
+} | {
+    readonly kind: "invalid";
+    readonly field: string;
+    readonly reason: string;
+};
+
+// @public (undocumented)
+function validateFilteredAck(ack: FilteredAck): void;
+
+// @public (undocumented)
+function validateFilteredPollRequest(request: FilteredPollRequest): void;
+
+// @public (undocumented)
+function validateFilterGroupRef(group: FilterGroupRef): void;
+
+// @public (undocumented)
+function validateFilterMutation(mutation: FilterMutation): void;
+
+// @public (undocumented)
+function validateFilterMutationRequest(request: FilterMutationRequest): void;
+
+// @public (undocumented)
+function validateFilterPreviewRequest(request: FilterPreviewRequest): void;
+
+// @public (undocumented)
+function validateFilterTestRequest(request: FilterTestRequest): void;
 
 // @public (undocumented)
 function validateForkId(forkId: string): void;
@@ -11815,6 +12827,9 @@ function validateMaterializationDestination(value: MaterializationDestination): 
 
 // @public (undocumented)
 function validateNamespace(namespace: string): void;
+
+// @public
+function validatePolicyIdentity(mode: ExecutionMode, digest: Uint8Array | undefined): void;
 
 // @public (undocumented)
 function validatePublicCheckpointMutation(value: PublicCheckpointMutation): void;
@@ -11853,7 +12868,7 @@ function validateResultFields(fields: readonly LogicalField[]): void;
 export function validateRoleName(name: string): void;
 
 // @public (undocumented)
-function validateSignature(signature: Signature): void;
+export function validateSignature(signature: Signature): void;
 
 // @public (undocumented)
 function validateSourceCut(value: SourceCut): void;
@@ -11865,20 +12880,21 @@ function validateSourceIncarnation(value: SourceIncarnation): void;
 function validateSourceScope(value: SourceScope): void;
 
 // @public (undocumented)
-function validateSupervisorAssertion(value: SupervisorActorAssertion): void;
-
-// @public (undocumented)
-function validateTypedValue(value: TypedValue, depth?: number): void;
-
-// @public (undocumented)
-function validateTypedValueAgainst(value: TypedValue, logicalType: LogicalType, required: boolean): void;
+export function validateSupervisorAssertion(value: SupervisorActorAssertion): void;
 
 // @public (undocumented)
 export type Value = {
-    readonly kind: "string";
+    readonly kind: "str";
     readonly value: string;
-} | {
+}
+/** A signed integer within the i64 range. */
+| {
     readonly kind: "int";
+    readonly value: bigint;
+}
+/** An unsigned integer past the i64 range. */
+| {
+    readonly kind: "uint";
     readonly value: bigint;
 } | {
     readonly kind: "float";
@@ -11894,19 +12910,19 @@ export type Value = {
 };
 
 // @public (undocumented)
-export type ValueDecoder<T> = (value: unknown) => T;
+export function valueFromInput(input: string): Value;
 
 // @public (undocumented)
 const VECTOR_FIELD = "embedding";
 
 // @public (undocumented)
 export class VectorMemory implements Memory {
-    constructor(embedder?: Embedder, laser?: Laser | undefined);
+    [WITH_EMBEDDER](embedder: Embedder): VectorMemory;
+    constructor(embedder: Embedder, laser?: Laser | undefined);
     // (undocumented)
     append(scope: MemoryScope, id: MemoryId, kind: MemoryKind, payload: Uint8Array): Promise<MemoryId>;
     // (undocumented)
     forget(scope: MemoryScope, id: MemoryId): Promise<void>;
-    // (undocumented)
     static governed(laser: Laser, embedder?: Embedder): VectorMemory;
     // (undocumented)
     improve(scope: MemoryScope, feedback: Feedback): Promise<MemoryId>;
@@ -11914,8 +12930,6 @@ export class VectorMemory implements Memory {
     recall(scope: MemoryScope, query: MemoryQuery): Promise<readonly MemoryItem[]>;
     // (undocumented)
     remember(scope: MemoryScope, payload: Uint8Array): Promise<MemoryId>;
-    // (undocumented)
-    size(): number;
 }
 
 // @public (undocumented)
@@ -11945,6 +12959,9 @@ export type Verdict = {
     readonly kind: "defer";
 };
 
+// @public
+export function verdictAsStr(verdict: Verdict): string;
+
 // @public (undocumented)
 export interface VerifiedPrincipal {
     // (undocumented)
@@ -11952,6 +12969,9 @@ export interface VerifiedPrincipal {
     // (undocumented)
     readonly principal: string;
 }
+
+// @public (undocumented)
+export type Verifier = (output: Uint8Array) => boolean | Promise<boolean>;
 
 // @public (undocumented)
 export function verifyCard(card: unknown, signature: AgentCardSignature, verifyingKey: Uint8Array): void;
@@ -11999,7 +13019,6 @@ export type VoteChoice = (typeof VoteChoice)[keyof typeof VoteChoice];
 
 // @public (undocumented)
 export class Watch {
-    constructor(getCapabilities: () => Promise<Capabilities>, openCursor: (options?: CursorOptions) => Promise<Cursor>);
     // (undocumented)
     index(index: string): this;
     // (undocumented)
@@ -12008,7 +13027,6 @@ export class Watch {
 
 // @public (undocumented)
 export class WatchReader {
-    constructor(cursor: Cursor, filterIndex: string | undefined);
     // (undocumented)
     fromOffsets(offsets: ReadonlyMap<number, bigint>): this;
     // (undocumented)
@@ -12028,6 +13046,12 @@ export interface WhoamiReply {
     readonly grants: readonly Grant[];
     // (undocumented)
     readonly roles: readonly string[];
+    readonly v?: number;
+}
+
+// @public (undocumented)
+interface WhoamiReq {
+    readonly v?: number;
 }
 
 // @public (undocumented)
@@ -12043,7 +13067,6 @@ const WINDOW_START = "window_start";
 
 declare namespace wire {
     export {
-        authz,
         canonicalAgentRecord,
         encodeCanonicalAgentRecord,
         decodeCanonicalAgentRecord,
@@ -12086,7 +13109,7 @@ declare namespace wire {
         AgentReply,
         parseAgentKind,
         parseIdempotencyKey,
-        parseWireAgentId as parseAgentId,
+        parseAgentId,
         taskStateFromCode,
         taskStateCode,
         taskStateDisplay,
@@ -12163,8 +13186,9 @@ declare namespace wire {
         AgentErrorBody,
         AgentDeadLetter,
         ContentRef,
+        ValidateError,
         CapabilityDescriptor,
-        AgentCard,
+        AgentCard_2 as AgentCard,
         AgentPresence,
         BodyRef,
         SignatureContext,
@@ -12210,6 +13234,83 @@ declare namespace wire {
         ArrowTimestampUnit,
         ArrowIpcRejectionCode,
         DEFAULT_ARROW_IPC_POLICY,
+        resourcePatternAll,
+        resourcePatternLiteral,
+        resourcePatternPrefix,
+        resourcePatternMatches,
+        encodeResourcePattern,
+        decodeResourcePattern,
+        encodeGrant,
+        decodeGrant,
+        encodeRole,
+        decodeRole,
+        encodeRoleBinding,
+        decodeRoleBinding,
+        validateRoleName,
+        featureAction,
+        actionIndex,
+        grantsAllow,
+        delegatedAllow,
+        encodeWhoamiReq,
+        decodeWhoamiReq,
+        encodeWhoamiReply,
+        decodeWhoamiReply,
+        encodeListRolesReq,
+        decodeListRolesReq,
+        encodeListRolesReply,
+        decodeListRolesReply,
+        encodeGetRoleReq,
+        decodeGetRoleReq,
+        encodeGetBindingsReq,
+        decodeGetBindingsReq,
+        encodeBindingsReply,
+        decodeBindingsReply,
+        encodeDefineRoleReq,
+        decodeDefineRoleReq,
+        encodeDeleteRoleReq,
+        decodeDeleteRoleReq,
+        encodeBindRolesReq,
+        decodeBindRolesReq,
+        encodeAuthzSubject,
+        decodeAuthzSubject,
+        encodeAuthzHistoryReq,
+        decodeAuthzHistoryReq,
+        encodeAuthzEventKind,
+        decodeAuthzEventKind,
+        encodeAuthzEvent,
+        decodeAuthzEvent,
+        encodeAuthzHistoryReply,
+        decodeAuthzHistoryReply,
+        encodeAuthzError,
+        decodeAuthzError,
+        encodeAuthzReply,
+        decodeAuthzReply,
+        Effect,
+        Feature,
+        Action,
+        ResourceKind,
+        ResourcePattern,
+        Grant,
+        Role,
+        RoleBinding,
+        ACTION_COUNT,
+        WhoamiReq,
+        WhoamiReply,
+        ListRolesReq,
+        ListRolesReply,
+        GetRoleReq,
+        GetBindingsReq,
+        BindingsReply,
+        DefineRoleReq,
+        DeleteRoleReq,
+        BindRolesReq,
+        AuthzSubject,
+        AuthzHistoryReq,
+        AuthzEventKind,
+        AuthzEvent,
+        AuthzHistoryReply,
+        AuthzError,
+        AuthzReply,
         encodeBatchRequest,
         decodeBatchRequest,
         encodeBatchReply,
@@ -12264,6 +13365,7 @@ declare namespace wire {
         encodeChangeRecord,
         decodeChangeRecord,
         ChangeRecord,
+        publicCheckpointMutationRequiredCapability,
         encodeRetentionGap,
         encodeDestinationBlock,
         encodePreparedAttemptSummary,
@@ -12310,6 +13412,7 @@ declare namespace wire {
         CheckpointReadConsistency,
         DestinationEffectiveState,
         PartitionLifecycleState,
+        PartitionLifecycleChange,
         DestinationBlockCode,
         RepairAction,
         PartitionCheckpoint,
@@ -12327,6 +13430,8 @@ declare namespace wire {
         DestinationBlock,
         RepairRecord,
         DestinationCheckpointStatus,
+        SupervisorAssertionAction,
+        SupervisorActorClaims,
         SupervisorActorAssertion,
         PublicCheckpointMutation,
         CheckpointRequestEnvelope,
@@ -12549,6 +13654,8 @@ declare namespace wire {
         QueryRouteTarget,
         QueryRoute,
         parseProjectionId,
+        projectionKindIsRow,
+        schemaDefContentType,
         encodeIndexField,
         decodeIndexField,
         encodeIndexSchema,
@@ -12576,19 +13683,200 @@ declare namespace wire {
         FieldType,
         IndexField,
         IndexSchema,
+        IndexSchemaBuilder,
         ProjectionId,
         ProjectionKind,
         EntitySchema,
         NodeExtract,
         EdgeExtract,
         Projection,
+        ProjectionBuilder,
         RetentionPolicy,
         SourceSelector,
         ProjectionBinding,
+        ProjectionBindingBuilder,
         SchemaSource,
         SchemaDef,
         ControlCommand,
         ControlEnvelope,
+        recordPolicyIsReject,
+        filterExprCaseInsensitive,
+        filterExprReadsPayload,
+        filterExprReadsHeaders,
+        consumerFilterDigest,
+        consumerFilterJson,
+        decodeConsumerFilterJson,
+        validateConsumerFilter,
+        textPredicateValidate,
+        globTokens,
+        unportableRegexConstruct,
+        timestampFormatMicrosFromText,
+        timestampFormatMicrosFromInteger,
+        filterConsumerIsGroup,
+        executionModeIsFiltered,
+        readModeIsPrimary,
+        faultReasonIsForeign,
+        appliedPolicyFiltered,
+        appliedPolicyUnfiltered,
+        filteredPageNextStart,
+        filterErrorInvalid,
+        filterErrorCheckVersion,
+        validateFilteredPollRequest,
+        validatePolicyIdentity,
+        validateFilteredAck,
+        validateFilterPreviewRequest,
+        validateFilterTestRequest,
+        validateFilterGroupRef,
+        validateFilterMutation,
+        validateFilterMutationRequest,
+        validateCatalogPage,
+        encodeFilterExpr,
+        encodeConsumerFilter,
+        encodeFilterSource,
+        encodeFilterConsumer,
+        encodeFilterRef,
+        encodeCatalogPosition,
+        decodeCatalogPosition,
+        encodeSourceGeneration,
+        encodeFilteredStart,
+        encodeFilteredPollRequest,
+        encodeFilteredAck,
+        encodeFilterPreviewRequest,
+        encodeHeaderScalar,
+        encodeFilterTestRequest,
+        encodeFilteredPage,
+        encodeFilterError,
+        encodeFilterReply,
+        encodeFilterGroupRef,
+        encodeFilterGroupIdentity,
+        encodeFilterMutation,
+        encodeFilterMutationRequest,
+        encodeFilterCatalogCommand,
+        encodeGetFilter,
+        encodeListFilters,
+        encodeListFilterRevisions,
+        encodeGetFilterBinding,
+        encodeListFilterBindings,
+        encodeGetFilterOperation,
+        encodeFilterCatalogReply,
+        decodeFilterExpr,
+        decodeFilterCodec,
+        decodeConsumerFilter,
+        decodeFilterSource,
+        decodeFilterConsumer,
+        decodeFilterRef,
+        decodeSourceGeneration,
+        decodeFilteredStart,
+        decodeFilteredPollRequest,
+        decodeFilteredAck,
+        decodeFilteredPage,
+        decodeFilterError,
+        decodeFilterReply,
+        decodeHeaderScalar,
+        decodeFilterGroupRef,
+        decodeFilterGroupIdentity,
+        decodeFilterMutation,
+        decodeFilterMutationRequest,
+        decodeFilterCatalogCommand,
+        decodeFilterMutationOutcome,
+        decodeFilterCatalogReply,
+        rustDouble,
+        parseCanonicalJson,
+        FILTER_EVALUATOR_VERSION,
+        MAX_REGEX_PREDICATES,
+        PathSegment,
+        FieldPath,
+        TimestampFormat,
+        Coerce,
+        CoercedPredicate,
+        HeaderPredicate,
+        FilterCodec,
+        FaultPolicy,
+        RecordPolicy,
+        TextMatch,
+        TextPredicate,
+        FilterExpr,
+        FilterLiteral,
+        ConsumerFilter,
+        GlobToken,
+        ExactDecimal,
+        FilterSource,
+        FilterConsumer,
+        FilterRef,
+        ExecutionMode,
+        CatalogPosition,
+        ReadMode,
+        SourceGeneration,
+        Continuation,
+        FilteredStart,
+        FilteredPollRequest,
+        StopReason,
+        FaultReason,
+        RecordFault,
+        AppliedPolicy,
+        FilteredPage,
+        FilteredAck,
+        AckReceipt,
+        FilterPreviewRequest,
+        FilterVerdict as Verdict,
+        Truth,
+        ExplainNode,
+        FilterExplanation,
+        PreviewRecord,
+        FilterPreview,
+        HeaderScalar,
+        FilterHeader,
+        FilterTestRequest,
+        FilterTestResult,
+        FilterValidation,
+        FilterErrorReason,
+        FilterError,
+        FilterOutcome,
+        FilterReply,
+        FilterState,
+        FilterGroupIdentity,
+        FilterGroupRef,
+        FilterRevisionInfo,
+        FilterSummary,
+        FilterBinding,
+        GroupFilterSpec,
+        GroupPolicyUnbound,
+        FilterDetail,
+        FilterMutation,
+        FilterMutationRequest,
+        FilterCatalogLimits,
+        FilterCatalogCommand,
+        FilterRevisionRef,
+        FilterMutationResult,
+        FilterMutationStatus,
+        FilterMutationOutcome,
+        GetFilter,
+        ListFilters,
+        FilterPage,
+        ListFilterRevisions,
+        FilterRevisionPage,
+        GetFilterBinding,
+        ListFilterBindings,
+        FilterBindingPage,
+        GetFilterOperation,
+        FilterPolicyRef,
+        ResolveFilterPolicy,
+        ResolvedFilterPolicy,
+        FilterCatalogOutcome,
+        FilterCatalogReply,
+        PayloadFault,
+        PayloadDecoders,
+        usesRegex,
+        decodeJsonPayload,
+        DecodeLimits,
+        DEFAULT_DECODE_LIMITS,
+        FilterRecord,
+        HeaderRef,
+        HeaderValueRef,
+        HeaderNeed,
+        JsonValue,
+        CompiledFilter,
+        TextMatcher,
         encodeForkInfo,
         decodeForkInfo,
         encodeForkCreate,
@@ -12598,6 +13886,7 @@ declare namespace wire {
         encodeForkPromote,
         decodeForkPromote,
         encodeForkList,
+        decodeForkList,
         encodeForkPut,
         decodeForkPut,
         encodeForkOutcome,
@@ -12613,6 +13902,7 @@ declare namespace wire {
         ForkCreate,
         ForkDelete,
         ForkPromote,
+        ForkList,
         ForkPut,
         ForkOutcome,
         ForkError,
@@ -12623,6 +13913,8 @@ declare namespace wire {
         decodeForwardedCommand,
         ForwardedQuery,
         ForwardedCommand,
+        edgeDirIsOut,
+        graphReturnIsNodes,
         encodeHop,
         decodeHop,
         encodeGraphStart,
@@ -12639,6 +13931,7 @@ declare namespace wire {
         decodeGraphNode,
         encodeGraphNodeFrame,
         graphEdgeRelate,
+        graphEdgeValid,
         graphEdgeValidAt,
         encodeGraphEdge,
         decodeGraphEdge,
@@ -12710,8 +14003,10 @@ declare namespace wire {
         opVersionsHasFeature,
         encodeOpVersions,
         decodeOpVersions,
+        filterAnnounceServed,
         filterAnnounceEvaluates,
         newBackendDescriptor,
+        backendReadinessNotReady,
         backendDescriptorHasCapability,
         newBackendAnnounce,
         encodeBackendDescriptor,
@@ -12721,7 +14016,7 @@ declare namespace wire {
         decodeHelloReply,
         encodeBackendAnnounce,
         decodeBackendAnnounce,
-        Feature_2 as Feature,
+        feature,
         OpVersions,
         HelloReply,
         BACKEND_DESCRIPTOR_VERSION,
@@ -12876,7 +14171,7 @@ declare namespace wire {
         LogPosition,
         WireId,
         RecordId,
-        WireConversationId as ConversationId,
+        ConversationId_2 as ConversationId,
         CorrelationId,
         ChannelId,
         LogicalSchemaId,
@@ -12893,7 +14188,7 @@ declare namespace wire {
         decodeMemoryRowScope,
         encodeKvEntry,
         decodeKvEntry,
-        kvEntryKeyString,
+        kvEntryKeyStr,
         encodeKvPage,
         decodeKvPage,
         encodeKvGet,
@@ -12927,6 +14222,7 @@ declare namespace wire {
         encodeKvMetadata,
         decodeKvMetadata,
         encodeKvNamespaces,
+        decodeKvNamespaces,
         encodeKvNamespaceInfo,
         decodeKvNamespaceInfo,
         encodeKvScan,
@@ -12958,6 +14254,7 @@ declare namespace wire {
         KvLeaseRenew,
         KvRelease,
         KvMetadata,
+        KvNamespaces,
         KvNamespaceInfo,
         KvScan,
         KvDeleteMany,
@@ -13052,6 +14349,7 @@ declare namespace wire {
         ManagedRequestEnvelope,
         MutationPosition,
         MutationCommandEnvelope,
+        consistencyIsEventual,
         encodeQueryPageEnvelope,
         encodeQueryCancelEnvelope,
         encodeQueryStatusEnvelope,
@@ -13071,6 +14369,7 @@ declare namespace wire {
         filterNegate,
         filterPred,
         newQuery,
+        operationalQuery,
         encodeQueryTarget,
         decodeQueryTarget,
         encodeFilter,
@@ -13089,7 +14388,11 @@ declare namespace wire {
         encodeQueryResult,
         decodeQueryResult,
         validateQueryResult,
+        queryResultFieldIndex,
         queryResultValue,
+        queryResultValueText,
+        queryResultValueU64,
+        queryResultValueI64,
         encodeQueryError,
         decodeQueryError,
         encodeQueryReplyFrame,
@@ -13153,8 +14456,14 @@ declare namespace wire {
         resultCodeWord,
         ResultCodeName,
         ResultCode,
+        logicalTypeKind,
+        logicalTypeAcceptsMapKey,
         encodeLogicalSchema,
         decodeLogicalSchema,
+        decimalValueValidateCanonical,
+        typedValueAsStr,
+        typedValueAsU64,
+        typedValueAsI64,
         encodeLogicalSchemaRef,
         decodeLogicalSchemaRef,
         encodeLogicalField,
@@ -13164,12 +14473,13 @@ declare namespace wire {
         encodeTypedValue,
         decodeTypedValue,
         typedValueDiagnosticText,
-        validateTypedValue,
-        validateTypedValueAgainst,
+        typedValueValidateCanonical,
+        typedValueValidateAgainst,
         createLogicalSchema,
         validateLogicalSchema,
         validateResultFields,
-        canonicalSchemaBytes,
+        logicalSchemaComputeFingerprint,
+        logicalSchemaCanonicalFingerprintBytes,
         MAX_LOGICAL_SCHEMA_DEPTH,
         MAX_LOGICAL_SCHEMA_FIELDS,
         MAX_LOGICAL_SCHEMA_BYTES,
@@ -13182,6 +14492,10 @@ declare namespace wire {
         PROVENANCE_FIELDS,
         LogicalType,
         LogicalTypeKind,
+        SchemaFingerprint,
+        Digest32,
+        UuidValue,
+        BinaryValue,
         LogicalField,
         LogicalSchemaRef,
         LogicalSchema,
@@ -13209,7 +14523,7 @@ declare namespace wire {
         decodeFoldSnapshot,
         foldSnapshotResumeOffset,
         FoldSnapshot,
-        OPS_STREAM,
+        OPS_STREAM_DEFAULT as OPS_STREAM,
         CONTROL_TOPIC,
         DLQ_TOPIC,
         CHANGES_TOPIC,
@@ -13223,22 +14537,11 @@ declare namespace wire {
         DEFAULT_GRAPH_MUTATIONS_TOPIC,
         DEFAULT_CHECKPOINT_MUTATIONS_TOPIC,
         WireTopology,
+        valueFromInput,
         encodeValue,
         decodeValue,
         Value
     }
-}
-
-// @public (undocumented)
-export class WireConversationId extends WireId<"ConversationId"> {
-    // (undocumented)
-    static fromBytes(bytes: Uint8Array): WireConversationId;
-    // (undocumented)
-    static fromU128(value: bigint): WireConversationId;
-    // (undocumented)
-    static parse(text: string): WireConversationId;
-    // (undocumented)
-    static tryParse(text: string): WireConversationId | undefined;
 }
 
 // @public (undocumented)
@@ -13318,21 +14621,19 @@ function withUsage(envelope: AgentEnvelope, usage: TokenUsage): AgentEnvelope;
 
 // @public (undocumented)
 export class Workflow {
-    constructor(laser: Laser, name: string);
     // (undocumented)
     budget(budget: Budget): this;
     // (undocumented)
     inboxRoute(route: InboxRoute): this;
     // (undocumented)
-    readonly name: string;
-    // (undocumented)
     registered(): this;
-    // (undocumented)
-    run(options?: WorkflowRunOptions): Promise<WorkflowOutcome>;
+    run(options?: {
+        readonly signal?: AbortSignal;
+    }): Promise<WorkflowOutcome>;
     // (undocumented)
     runId(runId: ConversationId): this;
     // (undocumented)
-    step(label: string, target: Router, build: StepFn): StepBuilder;
+    step(label: string, target: Router, build: StepFn): StepHandle;
 }
 
 // @public (undocumented)
@@ -13346,26 +14647,11 @@ export interface WorkflowOutcome {
     readonly runId: ConversationId;
 }
 
-// @public (undocumented)
-export interface WorkflowRunOptions {
-    // (undocumented)
-    readonly signal?: AbortSignal;
-}
-
-// @public (undocumented)
-export type WorkflowVerifier = (output: Uint8Array) => boolean | Promise<boolean>;
-
-// @public (undocumented)
-export class ZeroEmbedder implements Embedder {
-    // (undocumented)
-    embed(): Promise<readonly number[]>;
-}
-
 // Warnings were encountered during analysis:
 //
-// src/conversation-state.ts:71:31 - (ae-forgotten-export) The symbol "load" needs to be exported by the entry point full.d.ts
-// src/conversation-state.ts:71:31 - (ae-forgotten-export) The symbol "loadWith" needs to be exported by the entry point full.d.ts
-// src/wire/control.ts:126:39 - (ae-forgotten-export) The symbol "FilterCatalogCommand" needs to be exported by the entry point full.d.ts
+// src/client/laser.ts:588:16 - (ae-forgotten-export) The symbol "ClientOwnership" needs to be exported by the entry point full.d.ts
+// src/conversation-state.ts:101:31 - (ae-forgotten-export) The symbol "load" needs to be exported by the entry point full.d.ts
+// src/conversation-state.ts:101:31 - (ae-forgotten-export) The symbol "loadWith" needs to be exported by the entry point full.d.ts
 
 // (No @packageDocumentation comment for this package)
 

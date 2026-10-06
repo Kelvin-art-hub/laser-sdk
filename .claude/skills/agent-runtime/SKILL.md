@@ -7,13 +7,13 @@ description: The Laser SDK runtime - `sdk/src/agent/`. Use when changing the `La
 
 The native TypeScript peer is `foreign/typescript/src/agent`, with contracts, workflows, and real-Iggy runtime tests under `foreign/typescript/test`.
 
-`agent/` is the customer-facing runtime: how you send, consume reliably, route, and spawn agents. Load [laser-sdk-overview](../laser-sdk-overview/SKILL.md) first. Repo rules in [AGENTS.md](../../../AGENTS.md).
+`agent/` is the public runtime: how you send, consume reliably, route, and spawn agents. Load [laser-sdk-overview](../laser-sdk-overview/SKILL.md) first. Repo rules in [AGENTS.md](../../../AGENTS.md).
 
 Iggy provides the VSR transport and AGDX command classifier. Agent publish, poll, consumer-group, replay, retry, and dead-letter paths use standard Iggy commands. Managed presence, registry enrichment, fenced workflows, and run-registry commands use the non-replicated extension path and remain capability-gated by the connected Iggy server.
 
 ## STOP and ask the user before
 
-- Changing public signatures: `Laser::{send_agent, request, bootstrap, spawn_subconversation}`, `AgentHandler::handle` (takes `&AgentMessage` + an `&AgentCtx<'_>`), `AgentCtx`, `Agent`/`AgentHandle`, `ReliableConsumer::run`. These are the API customers code against.
+- Changing public signatures: `Laser::{send_agent, request, bootstrap, spawn_subconversation}`, `AgentHandler::handle` (takes `&AgentMessage` + an `&AgentCtx<'_>`), `AgentCtx`, `Agent`/`AgentHandle`, `ReliableConsumer::run`. These are the API users code against.
 - Both `Serial` and `SerialPerPartition` use `AutoCommit::Disabled` and store offsets after successful handling. Changing this policy requires explicit authorization. Do not weaken at-least-once handling.
 - Changing dedup-before-handle ordering or the DLQ behavior.
 
@@ -52,7 +52,7 @@ Builder capabilities remain the additive seed during refresh. `Laser::with_capab
 
 `InboxRoute::Advertised` is the default, and the chosen route passes to the consumer and context. Non-empty capabilities trigger `advertise` before consumption. It publishes a card through `Laser::publish_card` and can call `advertise_presence` when supported. Presence is query-gated and best-effort except `PresenceConflict`. One connection can advertise one identity.
 
-`ack_on_pickup` defaults off. When enabled, a consumer publishes `Working` on `respond_on` before handling a command. `ready()` waits for group membership and polling readiness. `shutdown()` drains within `shutdown_grace`, `join()` returns the task result, and `abort()` stops immediately. Dropping the handle does not stop the agent.
+`ack_on_pickup` defaults off. When enabled, a consumer publishes `Working` on `respond_on` before handling a command. `ready()` waits for group membership and polling readiness. `shutdown()` drains within `shutdown_grace`, `join()` returns the task result, and `abort()` stops immediately. Dropping the handle signals a graceful shutdown and stops periodic consolidation.
 - `../govern.rs` - effect-boundary policy. `QuorumGovernor` runs voters concurrently. Every mandatory voter must affirm. Mandatory errors, empty sets, invalid thresholds, duplicate names, and conflicting body replacements block. Non-mandatory errors abstain. `SwappableGovernor::swap` returns the replaced policy and `current` reads the active one.
 - `../swarm.rs` - replay-safe supervisor fold. `observe` drops unattributed evidence and deduplicates by `decision_id`. Latest evidence is selected by `(at_micros, decision_id)`.
 - `../crash_context.rs` - combines already-read journal, dead letter, and policy evidence. `summarize` bounds and escapes untrusted text so payload control characters cannot forge lines.
@@ -66,7 +66,7 @@ Python `PyAgentCtx` in `foreign/python/src/agent_runtime.rs` exposes these opera
 
 `stream(correlation, purpose)` creates `AgdxStream`. The opening chunk carries purpose and deadline. Each write assigns a sequence, and `finish` or `fail` supplies the terminal. `.buffered(max_chunks, linger)` groups records, including the terminal, without a background task. `Agdx::assemble` is shared by individual and buffered sends.
 
-`sdk/src/batching.rs` supplies `topic.batching()` for general records. It bounds records, bytes, and delay, and requires one partition key per handle. Size-triggered flush runs inline to apply backpressure. `flush()` and `close()` are explicit, while drop flushing is best-effort and logs failures.
+`sdk/src/batching.rs` supplies `topic.batching()` for general records. It bounds records, bytes, and delay, and requires one partition key per handle. Size-triggered flush runs inline to apply backpressure. A failed linger-timer flush never stops the timer. Its failure is kept and returned by the next `send()`, `flush()`, or `close()`. A `send()` that finds it refuses its own record and adds it to the unconfirmed records. `flush()` and `close()` drain the queue first. Several kept failures become one `LaserError::PublishFailed` that lists the records of every failed batch. Drop flushing is best-effort and logs failures.
 
 Sends attach `agdx.av`, `agdx.ct`, a conversation `Uint128`, and the target name when present. Partition routing uses the canonical conversation base32 string. `AgdxStream::write` rejects bodies above `MAX_CHUNK_BODY_BYTES` before publication and advances the sequence only after success. The guidance constants are `DEFAULT_CHUNK_FLUSH_BYTES`, `DEFAULT_CHUNK_LINGER_MS`, and `MAX_CHUNK_BODY_BYTES`.
 - `ChunkAssembler` in `assembler.rs` applies chunks in order and counts discarded duplicates. A gap creates a local `gap` terminal. Records after a terminal are dropped. `abandon()` creates a local `abandoned` terminal. `StreamEvent::{Body, Finished, Failed}` reports results without I/O or a clock.
@@ -76,7 +76,7 @@ Sends attach `agdx.av`, `agdx.ct`, a conversation `Uint128`, and the target name
 Presence uses `refresh_presence`, with a cache lifetime of about 2s. `Laser::advertise_presence` and `clear_presence` use `AGDX_SET_CLIENT_METADATA`. `Laser::client_metadata()` reads paged discovery data. These methods require `query`. `PresenceEntry` retains the authenticated `user_id`. `inbox_for_principal(agent, user_id)` requires that identity, while `inbox_for(agent)` resolves the claim alone.
 
 `Laser::quarantine(operator, agent)` appends a status fact, and `apply_quarantine` excludes it from `resolve`. `is_quarantined` reports the state. `Laser::unquarantine(operator, agent)` reverses it. Registry-topic permissions control these writes. With `sign` and `LaserBuilder::verifier(Arc<KeyRegistry>)`, `quarantine_signed` and `unquarantine_signed` also require valid operator signatures.
-- `contract.rs` - `Laser::contract(Router) -> ContractBuilder` resolves one target and watches pickup plus terminal. With a verifier enrolled, plain, invalid, and wrong-identity replies are ignored. A principal-bound route binds verification to the same authenticated principal, a claim route binds to the target's enrolled identity. Accepted replies carry `AgentMessage::verified_principal`, and scatter preserves it per branch. Python keeps `contract`/`scatter` as body-only conveniences and exposes identity through `contract_report`/`scatter_report`.
+- `contract.rs` - `Laser::contract(Router) -> ContractBuilder` resolves one target and watches pickup plus terminal. With a verifier enrolled, plain, invalid, and wrong-identity replies are ignored. A principal-bound route binds verification to the same authenticated principal, a claim route binds to the target's enrolled identity. Accepted replies carry `AgentMessage::verified_principal`, and scatter preserves it per branch. Python `contract` returns a `Contract` (`Completed(reply)`, `Failed(reply)`, `NotConsumed()`, `TimedOut()`) whose reply carries the verified principal, and `scatter_report` returns a `ScatterReport`. `scatter` stays a body-only convenience. Contracts default to a 30-second deadline in all three SDKs and take `expire_if_not_consumed`, `reply_on`, `conversation`, `fence`, `registered`, and named-agent routing (Python `agent=`, TypeScript `expireIfNotConsumed`). `Laser::agent(id)` returns `AgentScope` in all three.
 - `Laser::workflow(name)` creates `Workflow`, with `budget`, `inbox_route`, `step(label, Router, StepFn)`, and `run`. `.registered()` requires `runs`. `StepHandle` supplies `after`, `verify_with`, `exclusive`, `exclusive_in(namespace)`, `compensate_with`, and `on_timeout`. `run()` orders dependencies, passes outputs through `StepContext`, enforces `Budget`, verifies results, and records completion. Failure runs compensation in reverse order. An `all_capable` step succeeds when at least one dispatched agent completes.
 
 Exclusive steps require `kv_fenced_leases` and a unique holder per assignment. The default coordination namespace is `WORKFLOW_FENCE_NAMESPACE`, or `agdx.workflow.fence`. `exclusive_in` selects the namespace shared with the handler `Kv::cas_fenced(target_key, fence_namespace, run_id, token)` call. Renew halfway through the granted lifetime and bound renewal by expiry and workflow deadline. Retain the lease through verification and the completion journal write.
@@ -103,15 +103,17 @@ Each `SessionTurnKind` uses one conversation-level `AgentTopic`. The kinds are `
 - A lock held across `.await` (especially the producer map or dedup).
 - `request` rescanning from offset 0 each poll instead of advancing a cursor.
 - A spawned task whose error is dropped (use `AgentHandle::join`/`shutdown`).
-- Dropping `AgentHandle` and expecting the agent to stop (it does not, that is by design - call `shutdown()`).
+- Dropping `AgentHandle` while the agent should keep running. Since 0.6.0 a dropped handle signals a graceful shutdown, so hold it until `shutdown()` or `join()`.
 - Undecodable messages silently skipped instead of dead-lettered.
 - A permanent / bad-input failure retried `max_attempts` times instead of returning `LaserError::rejected(..)` (immediate DLQ).
 - Assuming a premium capability is present without checking `Laser::capabilities()`.
 
-## Publish recovery
+## Client defaults
 
-Publish attempts default to 60 seconds with three retries. Retry delays start at 250 ms, double after each failure, and stop increasing at 30 seconds.
+Connect budgets, publish timeouts, retries, and failure reports have one owning page each: [connect timeout and cleanup](../../../docs/connect-timeout.md) and [publish recovery](../../../docs/publish-recovery.md). The 0.6.0 changes are in [client behavior](../../../docs/client-behavior.md).
 
-Connect budgets use Rust `connect_timeout`, Python `connect_timeout_ms`, and TypeScript `connectTimeout`, overriding `LASER_CONNECT_TIMEOUT_MS` (default 30000, see [connect timeout and cleanup](../../../docs/connect-timeout.md)). Rust builder methods are `publish_timeout`, `publish_max_retries`, and `publish_retry_backoff`. Python `Laser.connect` keywords are `publish_timeout_ms`, `publish_max_retries`, and `publish_retry_backoff_ms`. TypeScript builder methods are `publishTimeout`, `publishMaxRetries`, and `publishRetryBackoff`. Explicit configuration overrides `LASER_PUBLISH_TIMEOUT_MS`, `LASER_PUBLISH_MAX_RETRIES`, and `LASER_PUBLISH_RETRY_BACKOFF_MS`.
+## 0.6.0 parity additions
 
-Exhausted retries return an error for the application to handle. They do not exit the process. Preserve message identity and confirmed chunks across retries. See [publish recovery](../../../docs/publish-recovery.md).
+Python `AgdxStream` has `channel`, `with_deadline_micros`, `with_target`, `content_type`, `buffered(max_chunks, linger_ms)`, and `flush()`. `Workflow.run_id(id)` resumes a run in all three SDKs (TypeScript `runId`). TypeScript `AgentScope.contract(router)` sends as the scoped agent. `Intent.validate()` and `SwappableGovernor.current()` exist in all three.
+
+Agent handles own the worker lifetime. Dropping a Rust or Python handle stops the worker and consolidation. TypeScript asynchronous disposal stops its runtime. Join keeps consolidation active until the worker exits. Cancellation must stop further SDK retries or commits. See [client behavior](../../../docs/client-behavior.md).

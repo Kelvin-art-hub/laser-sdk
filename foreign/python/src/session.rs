@@ -1,20 +1,21 @@
-use crate::agent::PyAgentMessage;
 use crate::agent_runtime::static_topic;
 use crate::async_bridge::future_into_py;
 use crate::client::PyLaser;
-use crate::context::{PyContextScope, PyScopedMemory, bounded_policy};
+use crate::context::{
+    PyContextMessage, PyContextScope, PyScopedMemory, bounded_policy, context_policy, take_failure,
+};
 use crate::convert::payload_bytes;
 use crate::errors::to_pyerr;
 use crate::memory::{Backend, PyMemory};
-use laser_sdk::agent::{Session, SessionConfig, SessionTurn, SessionTurnKind, Sessions};
-use laser_sdk::context::Checkpoint;
-use laser_sdk::memory::LogMemory;
+use laser_sdk::agent::{
+    Session, SessionConfig, SessionPolicy, SessionTurn, SessionTurnKind, Sessions,
+};
+use laser_sdk::context::{Checkpoint, ContextMessage};
 use laser_sdk::types::ConversationId;
 use pyo3::prelude::*;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -68,6 +69,18 @@ pub struct PySessions {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PySessions {
+    /// The default topic a turn `kind` is recorded on.
+    #[staticmethod]
+    fn turn_topic(kind: &str) -> PyResult<String> {
+        Ok(turn_kind(kind)?.topic().topic_string())
+    }
+
+    /// The turn kind recorded on `topic` by default, or None for any other topic.
+    #[staticmethod]
+    fn turn_kind(topic: &str) -> Option<String> {
+        SessionTurnKind::for_topic(topic).map(|kind| kind.to_string())
+    }
+
     /// The durable session named `id`. The conversation derives from `id`, so
     /// the same id always reaches the same history, and nothing is created on
     /// the server until a turn is appended.
@@ -88,6 +101,82 @@ impl PySessions {
             ConversationId::from_str(&conversation_id).map_err(|e| to_pyerr(e.into()))?;
         Ok(PySession::new(self.inner.open(conversation)))
     }
+
+    /// The layout every session of this factory uses.
+    #[getter]
+    fn config(&self) -> PySessionConfig {
+        PySessionConfig {
+            inner: self.inner.config().clone(),
+        }
+    }
+}
+
+/// How a `Sessions` factory lays its sessions out on the log: the stream, the
+/// topic each turn kind rides, the memory namespace, and the context bounds.
+/// Read it from `Sessions.config` or `Session.config`, set it through the
+/// `Laser.sessions` keywords.
+#[gen_stub_pyclass]
+#[pyclass(name = "SessionConfig", frozen)]
+pub struct PySessionConfig {
+    inner: SessionConfig,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PySessionConfig {
+    /// The stream sessions ride, or `None` for the connection's default stream.
+    #[getter]
+    fn stream_name(&self) -> Option<&str> {
+        self.inner.stream_name()
+    }
+
+    /// The memory namespace `Session.memory` opens.
+    #[getter]
+    fn memory_namespace_name(&self) -> &str {
+        self.inner.memory_namespace_name()
+    }
+
+    /// The turn bound of `Session.context`.
+    #[getter]
+    fn context_turn_bound(&self) -> usize {
+        self.inner.context_turn_bound()
+    }
+
+    /// The estimated token bound of `Session.context`.
+    #[getter]
+    fn context_token_bound(&self) -> usize {
+        self.inner.context_token_bound()
+    }
+
+    /// Every topic this layout reads, in turn kind order.
+    #[getter]
+    fn topics(&self) -> Vec<String> {
+        self.inner
+            .topics()
+            .iter()
+            .map(|topic| topic.topic_string())
+            .collect()
+    }
+
+    /// The topic the turn `kind` rides under this layout.
+    fn topic_for(&self, kind: &str) -> PyResult<String> {
+        Ok(self.inner.topic_for(turn_kind(kind)?).topic_string())
+    }
+
+    /// The turn kind that rides `topic` under this layout, or None.
+    fn kind_for(&self, topic: &str) -> Option<String> {
+        self.inner.kind_for(topic).map(|kind| kind.to_string())
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SessionConfig(stream={:?}, memory_namespace={:?}, context_turns={}, context_tokens={})",
+            self.inner.stream_name(),
+            self.inner.memory_namespace_name(),
+            self.inner.context_turn_bound(),
+            self.inner.context_token_bound()
+        )
+    }
 }
 
 /// One agent session over a conversation. Turns are agent messages on the
@@ -106,6 +195,23 @@ impl PySession {
     }
 }
 
+/// The conversation id a session `policy` maps `key` to: `per_call` mints a
+/// fresh one on every call, `per_user` derives the same one for the same key.
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn session_policy_conversation_for(policy: &str, key: &str) -> PyResult<String> {
+    let policy = match policy {
+        "per_call" => SessionPolicy::PerCall,
+        "per_user" => SessionPolicy::PerUser,
+        other => {
+            return Err(crate::errors::InvalidError::new_err(format!(
+                "unknown session policy '{other}' (expected per_call or per_user)"
+            )));
+        }
+    };
+    Ok(policy.conversation_for(key).to_string())
+}
+
 fn turn_kind(kind: &str) -> PyResult<SessionTurnKind> {
     SessionTurnKind::from_str(kind).map_err(|_| {
         crate::errors::InvalidError::new_err(format!(
@@ -121,6 +227,14 @@ impl PySession {
     #[getter]
     fn conversation(&self) -> String {
         self.inner.conversation().to_string()
+    }
+
+    /// The layout this session uses, its factory's `config`.
+    #[getter]
+    fn config(&self) -> PySessionConfig {
+        PySessionConfig {
+            inner: self.inner.config().clone(),
+        }
     }
 
     /// The underlying `ContextScope`, for a topic outside the session's set,
@@ -171,19 +285,58 @@ impl PySession {
         })
     }
 
+    /// The context under an explicit policy: `LastN`, `TokenBudget`,
+    /// `RoleFilter`, or a `Chain` of them, the same values
+    /// `ContextScope.fetch_with` takes.
+    fn context_with<'py>(
+        &self,
+        py: Python<'py>,
+        policy: &Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let session = self.inner.clone();
+        let (policy, failure) = context_policy(policy)?;
+        future_into_py(py, async move {
+            let turns = session.context_with(policy).await.map_err(to_pyerr)?;
+            if let Some(error) = take_failure(&failure) {
+                return Err(error);
+            }
+            Ok(turns
+                .into_iter()
+                .map(PySessionTurn::from)
+                .collect::<Vec<_>>())
+        })
+    }
+
+    /// The knowledge graph `name`, the same graph `laser.graph(name)` returns.
+    /// It is shared across conversations, so the session does not narrow it.
+    fn graph(&self, name: String) -> crate::graph::PyGraph {
+        crate::graph::PyGraph::new(self.inner.scope().laser().clone(), name)
+    }
+
     /// This session's memory, scoped to the conversation: `memory` defaults to
     /// `laser.memory(<configured namespace>)`, or pass any handle from
-    /// `laser.memory`/`memory_on_topic`/`memory_topic`/`vector_memory`.
+    /// `laser.memory`/`memory_on_topic`/`memory_topic`/`memory_with` or `VectorMemory.governed(laser, embedder)`.
     #[pyo3(signature = (memory=None))]
     fn memory(&self, memory: Option<&PyMemory>) -> PyScopedMemory {
         let backend = match memory {
             Some(memory) => memory.backend(),
-            None => Backend::Log(Arc::new(LogMemory::in_namespace(
-                self.inner.scope().laser().clone(),
-                self.inner.config().memory_namespace_name().to_owned(),
-            ))),
+            None => Backend::new(
+                self.inner
+                    .scope()
+                    .laser()
+                    .memory(self.inner.config().memory_namespace_name()),
+            ),
         };
         PyScopedMemory::new(backend, self.inner.conversation())
+    }
+
+    /// This session's memory in an explicit `namespace`, scoped to the
+    /// conversation.
+    fn memory_in(&self, namespace: String) -> PyScopedMemory {
+        PyScopedMemory::new(
+            Backend::new(self.inner.scope().laser().memory(namespace)),
+            self.inner.conversation(),
+        )
     }
 
     /// Where this session's topics end right now. Persist it with
@@ -232,37 +385,37 @@ impl PySession {
     }
 
     /// Fold the turns up to `checkpoint` with `fold(state, turn) -> state`,
-    /// starting from `initial`: state as it stood then.
+    /// starting from `init`: state as it stood then.
     fn state_at<'py>(
         &self,
         py: Python<'py>,
         checkpoint: &PyCheckpoint,
-        initial: Py<PyAny>,
+        init: Py<PyAny>,
         fold: Py<PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.inner.clone();
         let checkpoint = checkpoint.inner.clone();
         future_into_py(py, async move {
             let turns = session.turns_at(checkpoint).await.map_err(to_pyerr)?;
-            fold_turns(turns, initial, fold)
+            fold_turns(turns, init, fold)
         })
     }
 
     /// Fold the turns appended after `checkpoint` with `fold(state, turn) ->
-    /// state`, starting from `initial`: bring state saved at that checkpoint
+    /// state`, starting from `init`: bring state saved at that checkpoint
     /// up to date.
     fn replay<'py>(
         &self,
         py: Python<'py>,
         checkpoint: &PyCheckpoint,
-        initial: Py<PyAny>,
+        init: Py<PyAny>,
         fold: Py<PyAny>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.inner.clone();
         let checkpoint = checkpoint.inner.clone();
         future_into_py(py, async move {
             let turns = session.turns_since(checkpoint).await.map_err(to_pyerr)?;
-            fold_turns(turns, initial, fold)
+            fold_turns(turns, init, fold)
         })
     }
 }
@@ -284,14 +437,14 @@ fn fold_turns(turns: Vec<SessionTurn>, initial: Py<PyAny>, fold: Py<PyAny>) -> P
 #[pyclass(name = "SessionTurn", frozen)]
 pub struct PySessionTurn {
     kind: SessionTurnKind,
-    message: PyAgentMessage,
+    message: ContextMessage,
 }
 
 impl From<SessionTurn> for PySessionTurn {
     fn from(turn: SessionTurn) -> Self {
         Self {
             kind: turn.kind,
-            message: PyAgentMessage::from_context(turn.message),
+            message: turn.message,
         }
     }
 }
@@ -306,24 +459,15 @@ impl PySessionTurn {
         self.kind.to_string()
     }
 
-    /// The raw payload.
-    #[getter]
-    fn payload(&self) -> Vec<u8> {
-        self.message.inner.payload.clone()
-    }
-
     /// The payload as UTF-8, lossy.
     fn text(&self) -> String {
-        String::from_utf8_lossy(&self.message.inner.payload).into_owned()
+        String::from_utf8_lossy(&self.message.payload).into_owned()
     }
 
     /// The message off the log, with its provenance and topic.
     #[getter]
-    fn message(&self) -> PyAgentMessage {
-        PyAgentMessage {
-            inner: self.message.inner.clone(),
-            topic: self.message.topic.clone(),
-        }
+    fn message(&self) -> PyContextMessage {
+        PyContextMessage::new(self.message.clone())
     }
 
     fn __repr__(&self) -> String {
@@ -345,12 +489,28 @@ pub struct PyCheckpoint {
     inner: Checkpoint,
 }
 
+impl PyCheckpoint {
+    pub(crate) fn new(inner: Checkpoint) -> Self {
+        Self { inner }
+    }
+
+    pub(crate) fn inner(&self) -> &Checkpoint {
+        &self.inner
+    }
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyCheckpoint {
     /// True when no topic was checkpointed.
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+
+    /// The checkpointed offsets of `topic` as a dict partition -> offset, or
+    /// None when the topic was not checkpointed.
+    fn topic_offsets(&self, topic: &str) -> Option<std::collections::BTreeMap<u32, u64>> {
+        self.inner.topic_offsets(topic).cloned()
     }
 
     /// This checkpoint as JSON.

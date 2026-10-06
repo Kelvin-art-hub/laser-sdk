@@ -39,7 +39,7 @@ Targets are explicit and mutually exclusive:
 
 Rust uses `laser.query(index)` and `laser.query_lakehouse(destination_id, generation)`. Python uses `laser.query(...)` and `laser.query_lakehouse(...)`. TypeScript uses `laser.query(...)` and `laser.queryLakehouse(...)`.
 
-The structured DSL includes exact matches, recursive filters, message type, a half-open time range, lexical and vector search, ordering, selection, aggregation, having, distinct, and typed raw SQL parameters. Raw SQL has an explicit dialect and cannot be mixed with the structured expression. Validation caps names, fields, predicates, parameters, SQL bytes, vector dimensions, cursor bytes, page size, and recursive depth before transport I/O.
+Python builds predicate trees with `Filter` (`pred`, `all`, `any`, `negate`) and passes them to `filter` and `having`. The aggregate alias is `agg_as` in Rust and Python and `aggAs` in TypeScript. Rust `deadline(Duration)` is relative, Python `deadline(seconds)` is relative and `deadline_micros` absolute, and TypeScript `deadline(milliseconds)` is relative and `deadlineMicros` absolute. The structured DSL includes exact matches, recursive filters, message type, a half-open time range, lexical and vector search, ordering, selection, aggregation, having, distinct, and typed raw SQL parameters. Raw SQL has an explicit dialect and cannot be mixed with the structured expression. Validation caps names, fields, predicates, parameters, SQL bytes, vector dimensions, cursor bytes, page size, and recursive depth before transport I/O.
 
 ## Typed results
 
@@ -47,9 +47,9 @@ The structured DSL includes exact matches, recursive filters, message type, a ha
 
 Use the result accessor by logical field name rather than manually searching the schema:
 
-- Rust: `result.value(row, "amount")`, `value_text`, `value_u64`, and `value_i64`.
-- Python: `result.value(row, "amount")` and `value_text`.
-- TypeScript: `queryResultValue(result, row, "amount")` and `typedValueDiagnosticText(value)`.
+- Rust: `result.value(row, "latency_ms")`, `value_text`, `value_u64`, `value_i64`, and `field_index`.
+- Python: `result.value(row, "latency_ms")`, `value_text`, `value_u64`, `value_i64`, and `field_index`. Paging fields live on `result.page`.
+- TypeScript: `queryResultValue(result, row, "latency_ms")`, `queryResultValueText`, `queryResultValueU64`, `queryResultValueI64`, `queryResultFieldIndex`, and `typedValueDiagnosticText(value)`.
 
 Reject replies with invalid field structure, reserved-field pairs, row width, value types, nullability, row count, or page cursors. Also require valid engine identity, sufficient consistency, target evidence, and lakehouse checkpoint evidence. Do not use partially decoded success data.
 
@@ -57,7 +57,7 @@ The reserved provenance field IDs and names may appear only as exact top-level r
 
 ## Paging and execution control
 
-The first request may use an offset for initial positioning. Continuation uses only the opaque `next_cursor` returned by the server. `has_more` is true exactly when `next_cursor` is present. Cursors are bounded, nonempty, and cannot contain control characters.
+The first request may use an offset for initial positioning. Continuation uses only the opaque `next_cursor` returned by the server. `QueryRequest::cursor(value)` (Python and TypeScript `cursor`) sets the page cursor and clears the offset. `Laser::query_page`, `query_status`, and `cancel_query` exist in all three SDKs (TypeScript `queryPage`, `queryStatus`, `cancelQuery`). `has_more` is true exactly when `next_cursor` is present. Cursors are bounded, nonempty, and cannot contain control characters.
 
 `AGDX_QUERY_PAGE_CODE`, `AGDX_QUERY_STATUS_CODE`, and `AGDX_QUERY_CANCEL_CODE` all use query version 1 envelopes. Cursor paging, execution status, and cancellation have separate negotiated capability flags and must be rejected locally when unavailable. Terminal execution states require a finish time. Only a failed state carries an error.
 
@@ -96,3 +96,5 @@ Wire types use named fields. The hello-negotiated surface slots and fenced-lease
 An intentional wire change must update Rust fixtures, the TypeScript fixture manifest and codecs, Python bindings and stubs, HTTP JSON fixtures, API reports, robustness coverage, and `bdd/scenarios/data_stack.feature`. Run focused tests while implementing, then the complete repository gate from `AGENTS.md` before release.
 
 The data-stack BDD scenarios compare Rust, Python, and TypeScript. They cover schemas, targets, typed values, destinations, checkpoints, Arrow metadata, paging, execution status, and cancellation.
+
+A zero row ceiling performs no query. Execution, pages, status, and cancellation reject replies for another execution ID. Version skew keeps its typed error classification. See [client behavior](../../../docs/client-behavior.md).

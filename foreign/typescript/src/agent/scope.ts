@@ -3,14 +3,21 @@ import { PresenceConflictError } from "../client/errors.js"
 import type { Laser } from "../client/laser.js"
 import type { Provenance } from "../provenance/provenance.js"
 import type { AgentId } from "../types/ids.js"
-import type { AgentCard, CapabilityDescriptor } from "../wire/agent.js"
+import { newAgentPresence, type AgentCard, type CapabilityDescriptor } from "../wire/agent.js"
+import type { ContractBuilder } from "./contract.js"
 import type { AgentMessage } from "./reliable-consumer.js"
+import type { Router } from "./router.js"
 
 export class AgentScope {
-  constructor(
+  private constructor(
     private readonly laser: Laser,
     readonly id: AgentId
   ) {}
+
+  /** @internal */
+  static create(laser: Laser, id: AgentId): AgentScope {
+    return new AgentScope(laser, id)
+  }
 
   send(topic: string, payload: BytesLike, provenance: Provenance): Promise<void> {
     return this.laser.sendAgent(topic, payload, { ...provenance, agent: this.id })
@@ -34,6 +41,12 @@ export class AgentScope {
     )
   }
 
+  /** A deadline-bound contract sent as this agent: `laser.contract(router)`
+   * with `.from(id)` already applied. */
+  contract(router: Router): ContractBuilder {
+    return this.laser.contract(router).from(this.id)
+  }
+
   publishCard(card: AgentCard): Promise<void> {
     return this.laser.publishCard(this.id, card)
   }
@@ -45,7 +58,7 @@ export class AgentScope {
       // Presence remains useful when card publication is unavailable.
     }
     try {
-      await this.laser.advertisePresence({ agent: this.id, inbox: listenOn })
+      await this.laser.advertisePresence(newAgentPresence(this.id.wireId(), listenOn))
     } catch (error) {
       if (error instanceof PresenceConflictError) throw error
     }

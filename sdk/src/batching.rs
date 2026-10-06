@@ -1,8 +1,9 @@
-use crate::error::LaserError;
+use crate::error::{LaserError, PublishFailure};
 use crate::laser::Laser;
 use iggy::prelude::{HeaderKey, HeaderValue, IggyMessage};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::{Mutex, Notify};
 
@@ -87,6 +88,8 @@ impl BatchingProducerBuilder {
             max_records: self.max_records,
             max_bytes: self.max_bytes,
             queue: Mutex::new(Queue::default()),
+            kept: Mutex::new(None),
+            failed: AtomicBool::new(false),
         });
         let shutdown = Arc::new(Notify::new());
         let timer = {
@@ -102,15 +105,9 @@ impl BatchingProducerBuilder {
                     // already taken out of the queue), losing it silently, so
                     // `close` signals here rather than calling `abort`.
                     tokio::select! {
-                        _ = ticker.tick() => {
-                            if let Err(error) = inner.flush().await {
-                                tracing::warn!(%error, "linger flush failed (error: {error})");
-                            }
-                        }
+                        _ = ticker.tick() => inner.flush_on_timer().await,
                         _ = shutdown.notified() => {
-                            if let Err(error) = inner.flush().await {
-                                tracing::warn!(%error, "shutdown flush failed (error: {error})");
-                            }
+                            inner.flush_on_timer().await;
                             break;
                         }
                     }
@@ -134,6 +131,13 @@ impl BatchingProducerBuilder {
 /// best-effort on a background task and logs a failure. A caller that needs
 /// the last batch on the log awaits `flush` (or [`close`](Self::close))
 /// before dropping.
+///
+/// A failed linger flush never stops the timer. Its failure is kept and
+/// returned by the next `send`, `flush`, or `close`, whichever comes first.
+/// A `send` that finds it refuses its own record, so nothing queues behind a
+/// failed batch. `flush` and `close` drain the queue first. When several
+/// batches fail before the caller asks, the report is one
+/// [`LaserError::PublishFailed`] that lists the records of all of them.
 pub struct BatchingProducer {
     inner: Arc<Inner>,
     timer: Option<tokio::task::JoinHandle<()>>,
@@ -146,6 +150,13 @@ struct Queue {
     payload: usize,
 }
 
+#[derive(Clone, Copy)]
+enum Trigger {
+    Send,
+    Timer,
+    Caller,
+}
+
 struct Inner {
     laser: Laser,
     stream: String,
@@ -154,11 +165,21 @@ struct Inner {
     max_records: usize,
     max_bytes: usize,
     queue: Mutex<Queue>,
+    // Held across the append, so batches reach the log in queue order. It
+    // guards the failure a timer flush left for the caller.
+    kept: Mutex<Option<LaserError>>,
+    // Mirrors whether a failure is kept, so a sender checks without waiting
+    // on a flush in flight.
+    failed: AtomicBool,
 }
 
 impl BatchingProducer {
     /// Enqueue one payload with optional headers. Flushes inline when a size
-    /// bound trips, so backpressure lands on the sender, not the timer.
+    /// bound trips, so backpressure lands on the sender, not the timer. An
+    /// error is the failure of that inline flush and lists this record as
+    /// unconfirmed. When a linger flush failed before this call, the record is
+    /// not queued: the error is that kept failure with this record added to
+    /// its unconfirmed records, reported once.
     pub async fn send(
         &self,
         payload: impl Into<Vec<u8>>,
@@ -169,6 +190,9 @@ impl BatchingProducer {
             .payload(payload.into())
             .user_headers(headers)
             .build()?;
+        if let Some(kept) = self.inner.take_kept().await {
+            return Err(refuse(kept, message, &self.inner.stream, &self.inner.topic));
+        }
         let flush_now = {
             let mut queue = self.inner.queue.lock().await;
             queue.payload += message.payload.len();
@@ -176,48 +200,134 @@ impl BatchingProducer {
             queue.messages.len() >= self.inner.max_records || queue.payload >= self.inner.max_bytes
         };
         if flush_now {
-            self.inner.flush().await?;
+            self.inner.flush(Trigger::Send).await?;
         }
         Ok(())
     }
 
-    /// Flush everything queued as one batch append. A no-op on an empty queue.
+    /// Flush everything queued as one batch append, then report the failure
+    /// an earlier linger flush left, if any. A no-op on an empty queue.
     pub async fn flush(&self) -> Result<(), LaserError> {
-        self.inner.flush().await
+        self.inner.flush(Trigger::Caller).await
     }
 
     /// Flush and stop the linger timer. The graceful shutdown spelling: the
     /// timer is signalled (never aborted mid-flush, which would drop a batch
     /// already taken from the queue) and awaited so its final drain completes,
-    /// then a last flush covers anything enqueued in the meantime.
+    /// then a last flush covers anything enqueued in the meantime and
+    /// reports a kept linger failure.
     pub async fn close(mut self) -> Result<(), LaserError> {
         self.shutdown.notify_one();
         if let Some(timer) = self.timer.take() {
             let _ = timer.await;
         }
-        self.inner.flush().await
+        self.inner.flush(Trigger::Caller).await
     }
 }
 
 impl Inner {
-    async fn flush(&self) -> Result<(), LaserError> {
+    async fn flush(&self, trigger: Trigger) -> Result<(), LaserError> {
+        let mut kept = self.kept.lock().await;
         let batch = {
             let mut queue = self.queue.lock().await;
-            if queue.messages.is_empty() {
-                return Ok(());
-            }
             queue.payload = 0;
             std::mem::take(&mut queue.messages)
         };
-        self.laser
-            .send_batch_on(
-                &self.stream,
-                &self.topic,
-                batch,
-                self.partition_key.as_deref(),
-            )
-            .await
-            .map(|_| ())
+        let sent = if batch.is_empty() {
+            Ok(())
+        } else {
+            self.laser
+                .send_batch_on(
+                    &self.stream,
+                    &self.topic,
+                    batch,
+                    self.partition_key.as_deref(),
+                )
+                .await
+                .map(|_| ())
+        };
+        let settled = settle(trigger, &mut kept, sent);
+        self.failed.store(kept.is_some(), Ordering::Release);
+        settled
+    }
+
+    async fn flush_on_timer(&self) {
+        // A timer flush keeps its failure for the caller, so it has nothing to return.
+        let _ = self.flush(Trigger::Timer).await;
+    }
+
+    // The failure a linger flush kept, taken so it is reported once.
+    async fn take_kept(&self) -> Option<LaserError> {
+        if !self.failed.load(Ordering::Acquire) {
+            return None;
+        }
+        let mut kept = self.kept.lock().await;
+        self.failed.store(false, Ordering::Release);
+        kept.take()
+    }
+}
+
+// Decides who hears about a flush result. A sender hears its own inline
+// flush. The timer keeps a failure. The caller hears everything kept so far
+// together with its own flush.
+fn settle(
+    trigger: Trigger,
+    kept: &mut Option<LaserError>,
+    sent: Result<(), LaserError>,
+) -> Result<(), LaserError> {
+    match trigger {
+        Trigger::Send => sent,
+        Trigger::Timer => {
+            if let Err(error) = sent {
+                tracing::warn!(%error, "linger flush failed");
+                *kept = Some(match kept.take() {
+                    Some(earlier) => merge(earlier, error),
+                    None => error,
+                });
+            }
+            Ok(())
+        }
+        Trigger::Caller => match (kept.take(), sent) {
+            (None, sent) => sent,
+            (Some(earlier), Ok(())) => Err(earlier),
+            (Some(earlier), Err(error)) => Err(merge(earlier, error)),
+        },
+    }
+}
+
+// A kept failure reported to a sender, with the sender's record added to the
+// unconfirmed records because it was never queued. A kept failure that lists
+// no records becomes the cause of a publish failure for this one record.
+fn refuse(kept: LaserError, record: IggyMessage, stream: &str, topic: &str) -> LaserError {
+    match kept {
+        LaserError::PublishFailed(mut failure) => {
+            failure.unconfirmed.push(record);
+            LaserError::PublishFailed(failure)
+        }
+        source => LaserError::PublishFailed(Box::new(PublishFailure {
+            source,
+            stream: stream.to_owned(),
+            topic: topic.to_owned(),
+            committed: Vec::new(),
+            unconfirmed: vec![record],
+        })),
+    }
+}
+
+// One report for every batch that failed: the first cause, with the records
+// of the later batch added. A later failure that carries no records is logged.
+fn merge(earlier: LaserError, later: LaserError) -> LaserError {
+    match (earlier, later) {
+        (LaserError::PublishFailed(mut first), LaserError::PublishFailed(next)) => {
+            let next = *next;
+            first.committed.extend(next.committed);
+            first.unconfirmed.extend(next.unconfirmed);
+            LaserError::PublishFailed(first)
+        }
+        (earlier, later) => {
+            tracing::warn!(error = %later, "a later batch flush failed while an earlier failure was kept");
+            earlier
+        }
     }
 }
 
@@ -230,5 +340,160 @@ impl Drop for BatchingProducer {
         if self.timer.take().is_some() {
             self.shutdown.notify_one();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn producer() -> BatchingProducer {
+        let laser = Laser::from_client(iggy::prelude::IggyClient::default());
+        BatchingProducerBuilder::new(laser, "fleet".into(), "readings".into()).build()
+    }
+
+    fn publish_failure(payloads: &[&'static str]) -> LaserError {
+        LaserError::PublishFailed(Box::new(PublishFailure {
+            source: LaserError::Invalid("append refused".into()),
+            stream: "fleet".into(),
+            topic: "readings".into(),
+            committed: Vec::new(),
+            unconfirmed: payloads
+                .iter()
+                .map(|payload| {
+                    IggyMessage::builder()
+                        .payload((*payload).into())
+                        .build()
+                        .expect("a test message should build")
+                })
+                .collect(),
+        }))
+    }
+
+    fn unconfirmed(error: &LaserError) -> Vec<&[u8]> {
+        match error {
+            LaserError::PublishFailed(failure) => failure
+                .unconfirmed
+                .iter()
+                .map(|message| message.payload.as_ref())
+                .collect(),
+            other => panic!("expected a publish failure, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn given_a_kept_timer_failure_when_flushing_then_should_report_it_once() {
+        let producer = producer();
+        *producer.inner.kept.lock().await = Some(LaserError::Invalid("failed batch".into()));
+        producer.inner.flush_on_timer().await;
+        assert!(matches!(
+            producer.flush().await,
+            Err(LaserError::Invalid(_))
+        ));
+        producer
+            .close()
+            .await
+            .expect("the reported failure is not repeated");
+    }
+
+    #[tokio::test]
+    async fn given_a_kept_timer_failure_when_sending_then_should_refuse_the_record_and_report_both()
+    {
+        let producer = producer();
+        *producer.inner.kept.lock().await = Some(publish_failure(&["a"]));
+        producer.inner.flush_on_timer().await;
+        let error = producer
+            .send("b", BTreeMap::new())
+            .await
+            .expect_err("the sender hears the kept failure");
+        assert_eq!(unconfirmed(&error), [b"a".as_slice(), b"b"]);
+        assert!(
+            producer.inner.queue.lock().await.messages.is_empty(),
+            "the refused record is not queued"
+        );
+        producer
+            .close()
+            .await
+            .expect("the reported failure is not repeated");
+    }
+
+    #[tokio::test]
+    async fn given_a_kept_failure_without_records_when_sending_then_should_list_the_refused_record()
+    {
+        let producer = producer();
+        *producer.inner.kept.lock().await = Some(LaserError::Invalid("failed batch".into()));
+        producer.inner.flush_on_timer().await;
+        let error = producer
+            .send("b", BTreeMap::new())
+            .await
+            .expect_err("the sender hears the kept failure");
+        assert_eq!(unconfirmed(&error), [b"b".as_slice()]);
+        let LaserError::PublishFailed(failure) = error else {
+            panic!("a publish failure")
+        };
+        assert!(matches!(failure.source, LaserError::Invalid(_)));
+        assert_eq!(
+            (failure.stream.as_str(), failure.topic.as_str()),
+            ("fleet", "readings")
+        );
+    }
+
+    #[tokio::test]
+    async fn given_a_kept_timer_failure_when_closing_then_should_not_report_success() {
+        let producer = producer();
+        *producer.inner.kept.lock().await = Some(LaserError::Invalid("failed batch".into()));
+        assert!(matches!(
+            producer.close().await,
+            Err(LaserError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn given_a_failed_timer_flush_when_settled_then_should_keep_it_and_report_success() {
+        let mut kept = None;
+        settle(Trigger::Timer, &mut kept, Err(publish_failure(&["a"])))
+            .expect("the timer keeps the failure");
+        assert_eq!(
+            unconfirmed(kept.as_ref().expect("the failure is kept")),
+            [b"a"]
+        );
+    }
+
+    #[test]
+    fn given_two_failed_timer_flushes_when_settled_then_should_keep_the_records_of_both() {
+        let mut kept = None;
+        settle(Trigger::Timer, &mut kept, Err(publish_failure(&["a"])))
+            .expect("the timer keeps the first failure");
+        settle(Trigger::Timer, &mut kept, Err(publish_failure(&["b", "c"])))
+            .expect("the timer keeps the second failure");
+        assert_eq!(
+            unconfirmed(kept.as_ref().expect("the failures are kept")),
+            [b"a".as_slice(), b"b", b"c"]
+        );
+    }
+
+    #[test]
+    fn given_a_kept_failure_when_a_sender_flush_succeeds_then_should_not_report_it_to_the_sender() {
+        let mut kept = Some(publish_failure(&["a"]));
+        settle(Trigger::Send, &mut kept, Ok(())).expect("the sender hears only its own flush");
+        assert!(kept.is_some());
+    }
+
+    #[test]
+    fn given_a_kept_failure_when_the_caller_flush_also_fails_then_should_report_both_once() {
+        let mut kept = Some(publish_failure(&["a"]));
+        let error = settle(Trigger::Caller, &mut kept, Err(publish_failure(&["b"])))
+            .expect_err("the caller hears both failures");
+        assert_eq!(unconfirmed(&error), [b"a".as_slice(), b"b"]);
+        assert!(kept.is_none());
+    }
+
+    #[test]
+    fn given_a_kept_failure_when_the_caller_flush_succeeds_then_should_report_the_kept_one() {
+        let mut kept = Some(publish_failure(&["a"]));
+        let error = settle(Trigger::Caller, &mut kept, Ok(()))
+            .expect_err("the caller hears the kept failure");
+        assert_eq!(unconfirmed(&error), [b"a".as_slice()]);
+        assert!(kept.is_none());
     }
 }

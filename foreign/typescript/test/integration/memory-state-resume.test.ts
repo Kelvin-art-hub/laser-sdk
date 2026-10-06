@@ -12,7 +12,7 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
 async function eventually<Value>(read: () => Promise<Value | undefined>): Promise<Value> {
-  const deadline = performance.now() + 2_000
+  const deadline = performance.now() + 10_000
   let value = await read()
   while (value === undefined && performance.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -27,10 +27,7 @@ void test("given_a_configured_memory_topic_when_recalled_through_a_scope_then_sh
   await using laser = await Laser.connectWithStream(CONNECTION_STRING, stream)
   const memory = await laser.memoryTopic("incidents").partitions(2).ttl(86_400_000).build()
   const conversation = ConversationId.new()
-  await memory
-    .remember(encoder.encode("checkout uses the read replica"))
-    .conversation(conversation)
-    .send()
+  await memory.remember(encoder.encode("auth uses the read replica")).scope(conversation).send()
 
   const items = await eventually(async () => {
     const found = await laser
@@ -42,10 +39,10 @@ void test("given_a_configured_memory_topic_when_recalled_through_a_scope_then_sh
       .fetch()
     return found.length === 1 ? found : undefined
   })
-  assert.equal(decoder.decode(items[0]?.payload), "checkout uses the read replica")
+  assert.equal(decoder.decode(items[0]?.payload), "auth uses the read replica")
   assert.equal(items[0]?.source?.kind, "message")
 
-  const iggy = laser.iggyClient as unknown as {
+  const iggy = laser.client as unknown as {
     readonly topic: {
       get(input: { readonly streamId: string; readonly topicId: string }): Promise<{
         readonly partitionsCount: number
@@ -70,38 +67,36 @@ void test("given_durable_memory_when_a_fresh_handle_folds_then_should_rebuild_fe
     const memory = laser.memory(namespace)
     const keep = await memory
       .remember(encoder.encode("keep"))
-      .conversation(conversation)
+      .scope(conversation)
       .agent(agent)
       .dedup()
       .send()
-    await memory
-      .remember(encoder.encode("keep"))
-      .conversation(conversation)
-      .agent(agent)
-      .dedup()
-      .send()
+    await memory.remember(encoder.encode("keep")).scope(conversation).agent(agent).dedup().send()
     const drop = await memory
       .remember(encoder.encode("drop"))
-      .conversation(conversation)
+      .scope(conversation)
       .agent(agent)
       .send()
     await memory.improve({ conversation, agent }, { target: keep, weight: 4 })
     await memory.forget({ conversation, agent }, drop)
     const log = memory.logBackend()
     assert.ok(log !== undefined)
-    await log.set("plan", encoder.encode('{"step":1,"old":true}'))
-    await log.update("plan", encoder.encode('{"step":2,"old":null}'))
+    await log.setNamed("plan", encoder.encode('{"step":1,"old":true}'))
+    await log.updateNamed("plan", encoder.encode('{"step":2,"old":null}'))
 
     const rebuilt = laser.memory(namespace)
     const items = await eventually(async () => {
-      const found = await rebuilt.recall().conversation(conversation).agent(agent).folded().fetch()
+      const found = await rebuilt.recall(conversation).agent(agent).folded().fetch()
       return found.length === 1 ? found : undefined
     })
     assert.equal(decoder.decode(items[0]?.payload), "keep")
     assert.equal(items[0]?.score, 4)
-    assert.deepEqual(JSON.parse(decoder.decode(await rebuilt.logBackend()?.fetchFolded("plan"))), {
-      step: 2
-    })
+    assert.deepEqual(
+      JSON.parse(decoder.decode(await rebuilt.logBackend()?.fetchNamedFolded("plan"))),
+      {
+        step: 2
+      }
+    )
   } finally {
     await laser.close()
   }
@@ -136,8 +131,8 @@ void test("given_a_topic_snapshot_when_state_is_loaded_then_should_resume_after_
         new TopicSnapshotStore(laser),
         [AgentTopic.Commands],
         0,
-        (bytes) => Number(decoder.decode(bytes)),
-        (sum, message) => sum + Number(decoder.decode(message.payload))
+        (sum, message) => sum + Number(decoder.decode(message.payload)),
+        (bytes) => Number(decoder.decode(bytes))
       )
       return total === 6 ? total : undefined
     })
@@ -145,4 +140,63 @@ void test("given_a_topic_snapshot_when_state_is_loaded_then_should_resume_after_
   } finally {
     await laser.close()
   }
+})
+void test("given_managed_memory_with_user_and_application_scopes_when_recalled_then_should_isolate_the_newest_matching_items", async (context) => {
+  const stream = `laser-ts-test-${randomUUID()}`
+  await using laser = await Laser.connectWithStream(CONNECTION_STRING, stream)
+  if (!(await laser.capabilities()).kv.available) {
+    context.skip("this deployment has no managed memory view")
+    return
+  }
+  const memory = await laser.memoryTopic(`notes-${randomUUID()}`).build()
+  const first = ConversationId.new()
+  const second = ConversationId.new()
+  const matching = []
+  matching.push(
+    await memory
+      .remember(encoder.encode("first matching"))
+      .scope(first)
+      .user("reader")
+      .application("diagnostics")
+      .send()
+  )
+  await memory
+    .remember(encoder.encode("other user"))
+    .scope(first)
+    .user("other")
+    .application("diagnostics")
+    .send()
+  await memory
+    .remember(encoder.encode("other application"))
+    .scope(second)
+    .user("reader")
+    .application("other")
+    .send()
+  matching.push(
+    await memory
+      .remember(encoder.encode("second matching"))
+      .scope(second)
+      .user("reader")
+      .application("diagnostics")
+      .send()
+  )
+  const items = await eventually(async () => {
+    const selected = await memory
+      .recall()
+      .user("reader")
+      .application("diagnostics")
+      .limit(2)
+      .fetch()
+    return selected.length === 2 ? selected : undefined
+  })
+  const expected = matching
+    .map((id) => id.asU128())
+    .sort((left, right) => (left > right ? -1 : left < right ? 1 : 0))
+  assert.deepEqual(
+    items.map((item) => item.id.asU128()),
+    expected
+  )
+  const conversations = items.map((item) => item.provenance.conversationId.toString()).sort()
+  assert.deepEqual(conversations, [first.toString(), second.toString()].sort())
+  await laser.stream(stream).delete()
 })

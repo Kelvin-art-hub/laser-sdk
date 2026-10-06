@@ -3,12 +3,28 @@ import {
   Laser,
   parseProjectionId,
   type Capabilities,
-  type CapabilitySurface,
   type GraphNode,
   type MemoryItem,
   type Projection,
   type ProjectionBinding
 } from "@laserdata/laser-sdk"
+
+// The deployment features an example can require before it runs.
+export type ExampleFeature =
+  | "managed"
+  | "query"
+  | "destinations"
+  | "kv"
+  | "kvCas"
+  | "kvCasFenced"
+  | "kvFencedLeases"
+  | "graph"
+  | "forks"
+  | "agentWorkflow"
+  | "watch"
+  | "authz"
+  | "filters"
+  | "filterCatalog"
 
 export const LOCAL_CONNECTION_STRING = "iggy:iggy@127.0.0.1:8090"
 export const DEFAULT_PORT = 8090
@@ -64,8 +80,8 @@ export function streamFor(example: string, env: NodeJS.ProcessEnv = process.env)
 }
 
 /**
- * A managed index name owned by this invocation (`orders_v1` becomes
- * `orders_v1_<token>`), so a repeat or concurrent run materializes its own
+ * A managed index name owned by this invocation (`readings_v1` becomes
+ * `readings_v1_<token>`), so a repeat or concurrent run materializes its own
  * rows instead of counting a previous run's.
  */
 export function indexFor(base: string): string {
@@ -87,7 +103,7 @@ export async function connectExample(
   const stream = streamFor(example, env)
   const laser = await Laser.builder()
     .connectionString(resolveConnectionString(env))
-    .defaultStream(stream)
+    .stream(stream)
     .connect()
   try {
     await resetStream(laser, example, env)
@@ -115,7 +131,7 @@ export async function resetStream(
 
 export async function runExample(
   example: string,
-  run: (laser: Laser, signal: AbortSignal) => Promise<void>
+  run: (laser: Laser, signal: AbortSignal) => Promise<unknown>
 ): Promise<void> {
   await using laser = await connectExample(example)
   using shutdown = installShutdownSignals()
@@ -124,7 +140,7 @@ export async function runExample(
 
 export function managedGate(
   capabilities: Capabilities,
-  feature: CapabilitySurface,
+  feature: ExampleFeature,
   example: string,
   label: string = feature
 ): boolean {
@@ -148,15 +164,6 @@ export function messages(fallback: number, env: NodeJS.ProcessEnv = process.env)
 
 export function batchSize(fallback: number, env: NodeJS.ProcessEnv = process.env): number {
   return Math.max(1, envInteger("LASER_BATCH", fallback, env))
-}
-
-export function concurrency(fallback: number, env: NodeJS.ProcessEnv = process.env): number {
-  return Math.max(1, envInteger("LASER_CONCURRENCY", fallback, env))
-}
-
-export function payloadBytes(fallback: number, env: NodeJS.ProcessEnv = process.env): number {
-  const value = envInteger("LASER_PAYLOAD_BYTES", fallback, env)
-  return value >= 0 ? value : fallback
 }
 
 export function envInteger(
@@ -207,8 +214,16 @@ export class Rng {
   }
 }
 
-export const utf8 = (value: string): Uint8Array => new TextEncoder().encode(value)
-export const decodeUtf8 = (value: Uint8Array): string => new TextDecoder().decode(value)
+const UTF8_ENCODER = new TextEncoder()
+const UTF8_DECODER = new TextDecoder()
+
+export function utf8(text: string): Uint8Array {
+  return UTF8_ENCODER.encode(text)
+}
+
+export function decodeUtf8(bytes: Uint8Array): string {
+  return UTF8_DECODER.decode(bytes)
+}
 
 export function printHits(label: string, hits: readonly MemoryItem[]): void {
   console.log(label)
@@ -220,7 +235,7 @@ export function printHits(label: string, hits: readonly MemoryItem[]): void {
 
 export function graphNodeValue(node: GraphNode): string {
   for (const [key, value] of node.attrs) {
-    if (key === "value" && value.kind === "string") return value.value
+    if (key === "value" && value.kind === "str") return value.value
   }
   return "?"
 }
@@ -265,7 +280,7 @@ export const PROJECTION_POLL_MS = 150
 /**
  * Declares `index` over `topic` on a managed deployment and waits until it answers
  * queries, so a publish that follows flows into a live projector. The index is
- * named separately from its source topic (`orders` produces `orders_v1`), the
+ * named separately from its source topic (`readings` produces `readings_v1`), the
  * convention that lets a view be versioned without renaming the topic.
  * Index-only, so each record's own inline-payload choice decides inlining, and
  * notify-enabled, so a reader can await the view's advance instead of
@@ -472,7 +487,7 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function surfaceAvailable(capabilities: Capabilities, feature: CapabilitySurface): boolean {
+function surfaceAvailable(capabilities: Capabilities, feature: ExampleFeature): boolean {
   switch (feature) {
     case "managed":
       return capabilities.managed

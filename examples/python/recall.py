@@ -31,8 +31,8 @@ import _common
 import laser_sdk as ls
 
 EXAMPLE = "recall"
-NAMESPACE = "customer:42"
-FACT = "Prefers aisle seats, travels monthly"
+NAMESPACE = "host:node-7"
+FACT = "node-7 sits in the eu-west pool, rotates keys monthly"
 
 
 async def main() -> None:
@@ -57,7 +57,7 @@ async def main() -> None:
         )
         print("  newest recalled fact(s):")
         for hit in hits:
-            print(f"    {hit.text}")
+            print(f"    {hit.text()}")
 
         # Reinforce what was useful, then retire it. Both are records on the memory
         # topic, so the store stays an auditable history, not a mutable cell.

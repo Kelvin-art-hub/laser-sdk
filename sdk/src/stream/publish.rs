@@ -99,7 +99,7 @@ impl<'a> PublishRequest<'a> {
     /// Stamp a projection ref on `agdx.ref`. Routes the record through
     /// the matching `Projection` in the worker's catalog when the topic has a
     /// binding that allows that ref. Use `"<name>.v<version>"` shape, e.g.
-    /// `"order.v1"`, so producer and projector evolve together.
+    /// `"reading.v1"`, so producer and projector evolve together.
     pub fn projection_ref(mut self, value: impl Into<String>) -> Self {
         self.record.projection_ref = Some(value.into());
         self
@@ -120,8 +120,10 @@ impl<'a> PublishRequest<'a> {
     /// stay uniform over any caller-declared key, see [`header`](Self::header)
     /// for the exact-typed alternative one layer down.
     ///
-    /// **A record with zero `.index(...)` calls is dropped by the projector.**
-    /// Indexing is the explicit opt-in to materializing a queryable row.
+    /// An indexed field comes from this header or from the bound projection's
+    /// extraction schema, and the header wins for the same field name. A record
+    /// with no indexed fields from either source produces no row. A record
+    /// without `agdx.ref` is skipped when its binding has no default projection.
     pub fn index(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.record.index.push((key.into(), value.into()));
         self
@@ -173,13 +175,13 @@ impl<'a> PublishRequest<'a> {
     /// # use laser_sdk::prelude::*;
     /// # use laser_sdk::stream::{Json, Msgpack};
     /// # use serde::Serialize;
-    /// # #[derive(Serialize)] struct Order { id: String }
-    /// # async fn run(laser: &Laser, order: Order) -> Result<(), LaserError> {
-    /// laser.topic("orders").publish()
-    ///     .encode_with::<Json, _>(&order)?
+    /// # #[derive(Serialize)] struct Reading { host: String }
+    /// # async fn run(laser: &Laser, reading: Reading) -> Result<(), LaserError> {
+    /// laser.topic("readings").publish()
+    ///     .encode_with::<Json, _>(&reading)?
     ///     .send().await?;
-    /// laser.topic("orders").publish()
-    ///     .encode_with::<Msgpack, _>(&order)?
+    /// laser.topic("readings").publish()
+    ///     .encode_with::<Msgpack, _>(&reading)?
     ///     .send().await?;
     /// # Ok(()) }
     /// ```
@@ -441,8 +443,8 @@ impl<'a> BatchPublishRequest<'a> {
     /// Without this, Iggy uses its balanced partitioner to choose one
     /// partition for the whole `send_messages` call. With it, every message
     /// lands on the same keyed partition, preserving per-key ordering.
-    pub fn partition_key(mut self, value: impl Into<String>) -> Self {
-        self.partition_key = Some(value.into());
+    pub fn partition_key(mut self, key: impl Into<String>) -> Self {
+        self.partition_key = Some(key.into());
         self
     }
 
@@ -626,35 +628,35 @@ impl<'a> BatchPublishRequest<'a> {
         self
     }
 
-    /// Append every `body` in `iter` encoded with `C`. Errors short-circuit
+    /// Append every `body` in `items` encoded with `C`. Errors short-circuit
     /// on the first encoding failure.
-    pub fn extend_encoded<C, I, T>(mut self, iter: I) -> Result<Self, LaserError>
+    pub fn extend_encoded<C, I, T>(mut self, items: I) -> Result<Self, LaserError>
     where
         I: IntoIterator<Item = T>,
         C: Codec<T>,
     {
-        for body in iter {
+        for body in items {
             self = self.add_encoded::<C, T>(&body)?;
         }
         Ok(self)
     }
 
-    /// Convenience: `.extend_encoded::<Json, _, _>(iter)`.
-    pub fn extend_json<I, T>(self, iter: I) -> Result<Self, LaserError>
+    /// Convenience: `.extend_encoded::<Json, _, _>(items)`.
+    pub fn extend_json<I, T>(self, items: I) -> Result<Self, LaserError>
     where
         I: IntoIterator<Item = T>,
         T: Serialize,
     {
-        self.extend_encoded::<Json, I, T>(iter)
+        self.extend_encoded::<Json, I, T>(items)
     }
 
-    /// Convenience: `.extend_encoded::<Msgpack, _, _>(iter)`.
-    pub fn extend_msgpack<I, T>(self, iter: I) -> Result<Self, LaserError>
+    /// Convenience: `.extend_encoded::<Msgpack, _, _>(items)`.
+    pub fn extend_msgpack<I, T>(self, items: I) -> Result<Self, LaserError>
     where
         I: IntoIterator<Item = T>,
         T: Serialize,
     {
-        self.extend_encoded::<Msgpack, I, T>(iter)
+        self.extend_encoded::<Msgpack, I, T>(items)
     }
 
     /// Number of records currently queued. Useful for callers that want to

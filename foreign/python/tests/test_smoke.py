@@ -37,8 +37,10 @@ def test_provenance_round_trips_fields():
     provenance = ls.Provenance(agent="planner", idempotency_key="k1", input_tokens=10, cost_usd=0.5)
     assert provenance.agent == "planner"
     assert provenance.idempotency_key == "k1"
-    assert provenance.input_tokens == 10
-    assert provenance.cost_usd == 0.5
+    assert provenance.usage.input_tokens == 10
+    assert provenance.usage.output_tokens is None
+    assert provenance.usage.cost_usd == 0.5
+    assert ls.Provenance().usage is None
     assert provenance.conversation_id  # a fresh ULID
 
 
@@ -66,15 +68,15 @@ async def test_in_memory_store_get_set_delete():
 
 async def test_standalone_vector_memory_needs_no_connection():
     def embed(text):
-        return [1.0, 0.0] if "checkout" in text else [0.0, 1.0]
+        return [1.0, 0.0] if "auth" in text else [0.0, 1.0]
 
     conversation = ls.new_conversation_id()
-    memory = ls.Memory.vector(embed)
-    expected = await memory.remember("checkout uses the read replica", conversation=conversation)
-    await memory.remember("billing uses idempotency keys", conversation=conversation)
+    memory = ls.MemoryHandle.vector(embed)
+    expected = await memory.remember("auth uses the read replica", conversation=conversation)
+    await memory.remember("storage uses idempotency keys", conversation=conversation)
 
     hits = await memory.recall(
-        semantic="checkout is slow",
+        semantic="auth is slow",
         limit=1,
         conversation=conversation,
     )
@@ -93,8 +95,8 @@ async def test_file_store_persists_under_root(tmp_path):
 
 
 AVRO_SCHEMA = """{
-    "type":"record","name":"Order",
-    "fields":[{"name":"customer","type":"string"},{"name":"amount","type":"long"}]
+    "type":"record","name":"Reading",
+    "fields":[{"name":"host","type":"string"},{"name":"cpu","type":"long"}]
 }"""
 
 
@@ -102,10 +104,10 @@ def test_compiled_avro_round_trips_a_value():
     # Compiling needs no connection: encode a value to an Avro datum client-side,
     # then validate and decode it back.
     schema = ls.CompiledSchema.compile({"kind": "avro", "schema": AVRO_SCHEMA}, id=7)
-    datum = schema.encode_avro({"customer": "alice", "amount": 42})
+    datum = schema.encode_avro({"host": "node-7", "cpu": 42})
     assert isinstance(datum, bytes)
     assert schema.validate(datum)
-    assert schema.decode(datum) == {"customer": "alice", "amount": 42}
+    assert schema.decode(datum) == {"host": "node-7", "cpu": 42}
 
 
 def test_compiled_avro_rejects_a_mismatched_value():

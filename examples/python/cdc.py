@@ -6,7 +6,7 @@ their original offsets, and never name a filter themselves. A satellite fleet
 streams the change feed of its mission-ops database: every battery reading,
 orbit maneuver, and ground-station status flip. The anomaly desk wants the
 satellites that enter safe mode or leave the fleet, a handful of records out
-of hundreds, and everything else never leaves the broker.
+of hundreds, and everything else never leaves the server.
 
 What it shows:
   - publish a busy feed of typed change records, dataclasses keyed by
@@ -15,7 +15,7 @@ What it shows:
   - create the anomaly desk group with its filter in one call
   - consume as the group with the normal consumer, decode every delivered
     record back into its dataclass, commit after handling, and see how much
-    of the feed stayed on the broker
+    of the feed stayed on the server
   - page the matches again with the group reader and its own scan budget
   - test the group's filter on one record and preview every partition
     without storing progress
@@ -325,7 +325,7 @@ async def manage_revisions(laser: ls.Laser, desk, binding: dict, expected: int) 
     variant_name = f"{GROUP}-transitions-{_common.run_token()}"
     variant = laser.topic(TOPIC).consumer_group(variant_name)
     created = await variant.create(filter=ls.ConsumerFilter.json(safe_mode_transition()))
-    variant_binding = created["filter"]
+    variant_binding = created.filter
     reader = await variant.reader(count=1, local_guard=True, start="first")
     try:
         first = await asyncio.wait_for(reader.next_record(), READ_TIMEOUT)
@@ -377,7 +377,7 @@ async def main() -> None:
     laser = await _common.connect(EXAMPLE)
     try:
         caps = await laser.capabilities()
-        if not _common.managed_gate(caps.filters_catalog, "consumer group filters", EXAMPLE):
+        if not _common.managed_gate(caps.filters.catalog, "consumer group filters", EXAMPLE):
             return
 
         _common.phase("publish a busy fleet change feed, keyed by satellite")
@@ -403,9 +403,9 @@ async def main() -> None:
         _common.phase("create the anomaly desk group with its filter")
         desk = topic.consumer_group(f"{GROUP}-{_common.run_token()}")
         created = await desk.create(filter=safe_mode_filter())
-        binding = created["filter"]
+        binding = created.filter
         print(
-            f"  group {created['name']} ({created['id']}) runs revision "
+            f"  group {created.name} ({created.id}) runs revision "
             f"{binding['revision']} of its own filter from now on"
         )
 
@@ -416,10 +416,10 @@ async def main() -> None:
         delivered_bytes = 0
         try:
             for _ in range(strict_matches):
-                message = await asyncio.wait_for(consumer.next(), READ_TIMEOUT)
+                message = await consumer.next_within(READ_TIMEOUT)
                 change = fleet_change(message.json())
                 print(
-                    f"  partition {message.partition_id} offset {message.offset}: "
+                    f"  partition {message.partition_id} offset {message.position.offset}: "
                     f"{change.describe()}"
                 )
                 delivered_bytes += len(message.payload)
@@ -430,7 +430,7 @@ async def main() -> None:
         print(
             f"  delivered {strict_matches} of {len(feed)} records, "
             f"{delivered_bytes} of {published_bytes} payload bytes: "
-            f"{kept:.1f}% stayed on the broker"
+            f"{kept:.1f}% stayed on the server"
         )
 
         _common.phase("page the matches again with the group reader and its own scan budget")

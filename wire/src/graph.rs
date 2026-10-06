@@ -1,15 +1,16 @@
+use crate::agent::wire_id;
 use crate::error::InvalidError;
 use crate::limits::MAX_GRAPH_NAME_BYTES;
 use crate::query::{Consistency, Filter, Value};
 use serde::{Deserialize, Serialize};
 
-crate::agent::wire_id!(
+wire_id!(
     /// A graph node's identity. Content-addressed (the hash of the node's label
     /// and canonical value), so the same entity extracted from different messages
     /// converges on one node. Minted SDK- or projector-side.
     NodeId
 );
-crate::agent::wire_id!(
+wire_id!(
     /// A graph edge's identity. Content-addressed over its endpoints and type, so
     /// the same relationship is one edge however many times it is observed.
     EdgeId
@@ -534,13 +535,13 @@ mod tests {
     #[test]
     fn given_an_edge_validity_window_when_checked_then_should_hold_only_inside_it() {
         let alice = GraphNode::entity("User", "alice");
-        let pro = GraphNode::entity("Plan", "pro");
-        let edge = GraphEdge::relate(&alice, "on_plan", &pro).valid(Some(100), Some(200));
+        let pool = GraphNode::entity("Pool", "eu-west");
+        let edge = GraphEdge::relate(&alice, "in_pool", &pool).valid(Some(100), Some(200));
         assert!(!edge.valid_at(99), "before the window");
         assert!(edge.valid_at(100), "the lower bound is inclusive");
         assert!(edge.valid_at(150), "inside the window");
         assert!(!edge.valid_at(200), "the upper bound is exclusive");
-        let open = GraphEdge::relate(&alice, "on_plan", &pro);
+        let open = GraphEdge::relate(&alice, "in_pool", &pool);
         assert!(open.valid_at(0) && open.valid_at(u64::MAX));
         assert_eq!(edge.id, open.id, "validity is not part of edge identity");
     }

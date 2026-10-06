@@ -1,0 +1,62 @@
+# incident-desk - an AI incident desk on the log
+
+This example runs an incident desk for a host fleet whose agents coordinate through the log. It combines tickets, queries, memory, capacity grants, approval, and a proposed change in a fork.
+
+## What it does
+
+1. Generates deterministic support tickets and publishes them in bounded batches to `support_tickets`, explicitly inlining each body into its materialized row.
+2. Registers a body-extracted projection, waits until every ticket is queryable, and decodes one selected payload to verify the world model retains its source body.
+3. Seeds an in-process vector memory with prior resolutions.
+4. Starts four long-running agents: triage, specialist, resolver, and approver.
+5. Fans three deadline-bounded specialist questions from triage, then synthesizes the findings through the example-owned LLM seam.
+6. Applies capacity grants through a KV-backed deduplicator even though every grant command is sent twice.
+7. Routes grants of 100 units or more through a correlated human approval gate before the resolver changes state.
+8. Remembers the diagnosis as a durable summary in the vector memory the specialist recalls from.
+9. Writes a speculative bulk-resolution row into the `bulk-resolve-plan` fork and optionally promotes it.
+10. Rebuilds the incident from agent command, response, tool, and result topics through `ConversationState`.
+
+The example requires query, KV compare-and-swap, and forks for the full desk. On Apache Iggy it reports the first missing managed surface and exits before starting the agents.
+
+## Run it
+
+Run `npm run setup` once, then run from `examples/typescript`:
+
+```sh
+npm run example:incident-desk
+```
+
+Run the complete desk on Laser Stack or LaserData Cloud.
+
+```sh
+LASER_CONNECTION_STRING=user:pwd@your-laserdata-cloud-host \
+  npm run example:incident-desk
+```
+
+Scale ticket ingestion or apply the speculative plan.
+
+```sh
+LASER_MESSAGES=200000 LASER_BATCH=1000 \
+  npm run example:incident-desk
+
+LASER_APPLY_PLAN=1 \
+  npm run example:incident-desk
+```
+
+Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` to replace the deterministic `MockLlm` without changing any agent, routing, memory, or transport code.
+
+## Where to look (LaserData Cloud)
+
+- Query: the `support_tickets_<token>` world model (the run token keeps a rerun, or another language's desk on the same deployment, out of this run's rows), including payload selection for the original ticket JSON.
+- KV: `desk-grants-<run>` quotas and `desk-dedup-<run>` idempotency keys. The run ID is part of each namespace name.
+- Forks: `bulk-resolve-plan`, left open unless `LASER_APPLY_PLAN=1`.
+- Conversations: commands, specialist calls, approvals, responses, and the replayed incident audit trail.
+
+## Highlights
+
+- `Agent.builder()` defines identity, inbox, reply topic, handler, deduplication, and poll behavior without hiding the underlying Iggy topics.
+- `publishBatch().inlinePayload()` preserves each ticket body for query payload selection without duplicating indexed values in headers.
+- `context.request()` carries causality into specialist sub-conversations and bounds every branch with a deadline.
+- The KV deduplicator uses `expectAbsent().commit()` so at-least-once delivery does not duplicate the grant effect.
+- `approvalGate()` composes human input from ordinary correlated AGDX commands and responses.
+- `laser.fork(id)` isolates a what-if row until the caller promotes it.
+- `ConversationState.load()` proves the incident can be rebuilt from the durable log alone.

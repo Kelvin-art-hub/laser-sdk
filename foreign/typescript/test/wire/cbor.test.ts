@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { decodeOne, encodeNamed, expectMap, field } from "../../src/wire/cbor.js"
+import { cborFloat, decodeOne, encodeNamed, expectMap, field } from "../../src/wire/cbor.js"
 
 void test("given_a_named_map_when_encoded_then_should_preserve_insertion_order_not_canonical_sort", () => {
   const entries = new Map<string, unknown>()
@@ -41,8 +41,8 @@ void test("given_duplicate_map_keys_when_decoded_then_should_reject", () => {
 })
 
 void test("given_field_readers_when_reading_a_map_then_should_distinguish_absent_from_wrong_type", () => {
-  const map = expectMap(decodeOne(encodeNamed(new Map([["name", "orders"]])), "test"), "test")
-  assert.equal(field.requiredString(map, "name", "test"), "orders")
+  const map = expectMap(decodeOne(encodeNamed(new Map([["name", "readings"]])), "test"), "test")
+  assert.equal(field.requiredString(map, "name", "test"), "readings")
   assert.equal(field.optionalString(map, "missing", "test"), undefined)
   assert.throws(() => field.requiredString(map, "missing", "test"))
   assert.throws(() => field.requiredBytes(map, "name", "test"))
@@ -64,4 +64,10 @@ void test("given_a_small_or_large_integer_when_read_as_u64_then_should_always_re
   assert.equal(field.requiredU64(map, "small", "test"), 42n)
   assert.equal(typeof field.requiredU64(map, "small", "test"), "bigint")
   assert.equal(field.requiredU64(map, "big", "test"), 18446744073709551615n)
+})
+
+void test("given_a_float_token_in_a_map_when_encoded_then_should_write_a_cbor_float", () => {
+  const bytes = encodeNamed(new Map<string, unknown>([["x", cborFloat(1)]]))
+  // map(1), "x", half-precision float 1.0
+  assert.deepEqual(Buffer.from(bytes), Buffer.from([0xa1, 0x61, 0x78, 0xf9, 0x3c, 0x00]))
 })

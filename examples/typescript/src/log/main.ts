@@ -1,57 +1,59 @@
-import { jsonCodec, type Laser, type TypedRecord, type TypedRecords } from "@laserdata/laser-sdk"
+import { Json, type Laser, type TypedRecord, type TypedRecords } from "@laserdata/laser-sdk"
 import { phase, runExample } from "../common.js"
 
 export const EXAMPLE = "log"
-const STREAM = "shop"
-const TOPIC = "orders"
+const STREAM = "fleet"
+const TOPIC = "readings"
 const PARTITIONS = 2
 const REPLAY_TIMEOUT_MS = 10_000
 
-interface Order {
-  readonly id: number
-  readonly total: number
+interface Reading {
+  readonly host: string
+  readonly cpu: number
 }
 
-const ORDERS: readonly Order[] = [
-  { id: 1, total: 99 },
-  { id: 2, total: 42 }
+const READINGS: readonly Reading[] = [
+  { host: "node-1", cpu: 42 },
+  { host: "node-2", cpu: 91 }
 ]
 
 // Types vanish at runtime, so a typed topic takes a codec that validates what
 // came back off the log rather than asserting it.
-const ORDER_CODEC = jsonCodec<Order>((value) => {
-  if (typeof value !== "object" || value === null) throw new TypeError("order must be an object")
-  const { id, total } = value as Record<string, unknown>
-  if (typeof id !== "number" || typeof total !== "number") {
-    throw new TypeError("order fields are invalid")
+const READING_CODEC = new Json<Reading>((value) => {
+  if (typeof value !== "object" || value === null) throw new TypeError("reading must be an object")
+  const { host, cpu } = value as Record<string, unknown>
+  if (typeof host !== "string" || typeof cpu !== "number") {
+    throw new TypeError("reading fields are invalid")
   }
-  return { id, total }
+  return { host, cpu }
 })
 
-export async function run(laser: Laser, _signal: AbortSignal): Promise<void> {
+export async function run(laser: Laser, _signal: AbortSignal): Promise<readonly Reading[]> {
   phase("write two messages, then read them back")
   const topic = laser.stream(STREAM).topic(TOPIC)
   await topic.ensure(PARTITIONS)
 
-  for (const order of ORDERS) {
-    await topic.publish().json(order).send()
+  for (const reading of READINGS) {
+    await topic.publish().json(reading).send()
   }
 
-  // One typed handle pins the contract: `Order` in on publish, `Order` out on
+  // One typed handle pins the contract: `Reading` in on publish, `Reading` out on
   // replay, read from offset 0 with the offsets staying caller-owned.
-  const replay = await topic.json(ORDER_CODEC).records("log-example")
-  for (const { value } of await drain(replay, ORDERS.length)) {
-    console.log(`  order #${String(value.id)} total ${String(value.total)}`)
+  const replay = await topic.json(READING_CODEC).records("log-example")
+  const readings = (await drain(replay, READINGS.length)).map(({ value }) => value)
+  for (const value of readings) {
+    console.log(`  reading ${value.host} cpu ${String(value.cpu)}`)
   }
+  return readings
 }
 
 /** Collects through the current tail. A poll reads at most one configured batch
  * per partition, so a bounded loop is still required for a larger replay. */
 async function drain(
-  replay: TypedRecords<Order>,
+  replay: TypedRecords<Reading>,
   expected: number
-): Promise<readonly TypedRecord<Order>[]> {
-  const records: TypedRecord<Order>[] = []
+): Promise<readonly TypedRecord<Reading>[]> {
+  const records: TypedRecord<Reading>[] = []
   const deadline = Date.now() + REPLAY_TIMEOUT_MS
   for (;;) {
     if (Date.now() >= deadline) throw new Error(`only ${String(records.length)} record(s) replayed`)

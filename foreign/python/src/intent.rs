@@ -32,7 +32,7 @@ fn parse_choice(text: &str) -> PyResult<VoteChoice> {
 }
 
 fn intent_error(error: IntentError) -> PyErr {
-    InvalidError::new_err(error.to_string())
+    crate::errors::intent_error(&error)
 }
 
 /// How [`Vote`]s combine into a [`Decision`]. Mirrors `QuorumPolicy`, applied
@@ -202,6 +202,14 @@ impl PyIntent {
     #[getter]
     fn at_micros(&self) -> u64 {
         self.inner.at_micros
+    }
+
+    /// Check the intent's invariants again: non-empty unique eligible voters,
+    /// unique mandatory voters that are all eligible, a reachable threshold, a
+    /// deadline after the build time, and a digest that matches the body.
+    /// Raises `InvalidError` naming the first violation.
+    fn validate(&self) -> PyResult<()> {
+        self.inner.validate().map_err(intent_error)
     }
 
     fn __laser_json__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {

@@ -164,20 +164,32 @@ impl MemoryId {
 
     /// A deterministic, content-addressed id: the same `owner`, `kind`, and
     /// `body` always produce the same id, so a deduped remember stores one item.
-    /// The owner is the durable scope (stream and agent, never the conversation),
-    /// so the same fact in two conversations is one durable memory. The hash is
-    /// the wire crate's one canonical [`content_id`](laser_wire::hashing::content_id),
+    /// The owner is the durable scope (stream, agent, user, and application,
+    /// never the conversation), so the same fact in two conversations is one
+    /// durable memory and two users never share an id. The hash is the wire
+    /// crate's one canonical [`content_id`](laser_wire::hashing::content_id),
     /// so every SDK reproduces it from the same byte segments.
     pub fn content(owner: &MemoryScope, kind: MemoryKind, body: &[u8]) -> Self {
         let stream = owner.stream.as_deref().unwrap_or("").as_bytes();
         let agent = owner.agent.as_ref().map(AgentId::as_str).unwrap_or("");
+        let user = owner.user.as_deref().unwrap_or("").as_bytes();
+        let application = owner.app.as_deref().unwrap_or("").as_bytes();
         let kind = [kind.code()];
-        let segments: [&[u8]; 5] = [stream, &[0], agent.as_bytes(), &[0], &kind];
-        // The body is the last segment, appended so the segment order matches the
-        // pinned cross-SDK vector (owner, separators, kind byte, body).
-        let mut all = segments.to_vec();
-        all.push(body);
-        Self::from_u128(laser_wire::hashing::content_id(&all))
+        // Owner segments each end in a zero separator, then the kind byte and
+        // the body, the order every SDK hashes.
+        let segments: [&[u8]; 10] = [
+            stream,
+            &[0],
+            agent.as_bytes(),
+            &[0],
+            user,
+            &[0],
+            application,
+            &[0],
+            &kind,
+            body,
+        ];
+        Self::from_u128(laser_wire::hashing::content_id(&segments))
     }
 }
 
@@ -224,8 +236,8 @@ impl FromStr for MemoryId {
 /// are the broader identity layers: the end user the memory is about, and the
 /// application or org it belongs to within a deployment. They narrow recall on
 /// backends that store them (e.g. [`VectorMemory`]). The physical isolation
-/// boundary stays Iggy stream. (There is deliberately no customer layer
-/// here: a deployment is the customer's alone, and `app` is a scope within it.)
+/// boundary stays Iggy stream. (There is deliberately no account layer
+/// here: a deployment has one owner, and `app` is a scope within it.)
 #[derive(Debug, Clone, Default, bon::Builder)]
 pub struct MemoryScope {
     /// Restrict to this stream (none = any). The physical isolation boundary.
@@ -238,8 +250,7 @@ pub struct MemoryScope {
     pub conversation: Option<ConversationId>,
     /// Restrict to this application or org within the deployment (none = any).
     pub app: Option<String>,
-    /// Whether the item is conversation-scoped and prunable (`Session`, the
-    /// default) or shared across conversations and graph-backed (`Durable`).
+    /// A write policy for custom backends. Built-in recall filters use the identity fields above. `Session` is the default. Log storage does not persist this field.
     #[builder(default)]
     pub lifetime: Lifetime,
 }
@@ -268,6 +279,18 @@ pub struct MemoryItem {
     /// back to the source message while it is still on the log. `None` for an
     /// in-process recall or a read view without provenance.
     pub source: Option<SourceRef>,
+}
+
+impl MemoryItem {
+    /// The payload as UTF-8, lossy.
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.payload).into_owned()
+    }
+
+    /// Decode the payload as JSON.
+    pub fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, LaserError> {
+        serde_json::from_slice(&self.payload).map_err(|error| LaserError::Codec(error.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -304,8 +327,7 @@ pub struct RecallSignal {
 /// Each item's payload is read as UTF-8 (lossily). When the budget is reached the
 /// remaining items are dropped and a `[... N more recalled item(s) omitted ...]`
 /// marker is appended (summarize-on-overflow, the cheap form). `None` budget
-/// renders every item. The byte-based estimate avoids a tokenizer dependency, so
-/// it is a safe lower bound on a real model's count, not an exact one.
+/// renders every item. The byte-based estimate avoids a tokenizer dependency. It can differ from the model's token count.
 pub fn to_context_block(items: &[MemoryItem], token_budget: Option<usize>) -> String {
     let mut block = String::new();
     let mut spent = 0usize;
@@ -399,6 +421,22 @@ pub trait LocalMemory {
     /// so encode it with whatever codec you like before calling.
     async fn remember(&self, scope: &MemoryScope, payload: Vec<u8>)
     -> Result<MemoryId, LaserError>;
+    /// Append a typed item. Custom backends can keep their remember fallback.
+    fn append(
+        &self,
+        scope: &MemoryScope,
+        id: MemoryId,
+        kind: MemoryKind,
+        payload: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<MemoryId, LaserError>>
+    where
+        Self: Sync,
+    {
+        async move {
+            let _ = (id, kind);
+            self.remember(scope, payload).await
+        }
+    }
     async fn recall(
         &self,
         scope: &MemoryScope,
@@ -429,6 +467,19 @@ pub trait DynMemory: Send + Sync {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<MemoryId, LaserError>> + Send + 'a>,
     >;
+    /// Boxed typed append, with the custom backend's remember fallback.
+    fn append<'a>(
+        &'a self,
+        scope: &'a MemoryScope,
+        id: MemoryId,
+        kind: MemoryKind,
+        payload: Vec<u8>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<MemoryId, LaserError>> + Send + 'a>,
+    > {
+        let _ = (id, kind);
+        self.remember(scope, payload)
+    }
     /// Boxed [`Memory::recall`].
     fn recall<'a>(
         &'a self,
@@ -462,6 +513,18 @@ impl<M: Memory + Send + Sync> DynMemory for M {
         Box<dyn std::future::Future<Output = Result<MemoryId, LaserError>> + Send + 'a>,
     > {
         Box::pin(Memory::remember(self, scope, payload))
+    }
+
+    fn append<'a>(
+        &'a self,
+        scope: &'a MemoryScope,
+        id: MemoryId,
+        kind: MemoryKind,
+        payload: Vec<u8>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<MemoryId, LaserError>> + Send + 'a>,
+    > {
+        Box::pin(Memory::append(self, scope, id, kind, payload))
     }
 
     fn recall<'a>(
@@ -554,6 +617,7 @@ pub struct LogMemory {
 #[derive(Default)]
 struct Projection {
     items: Vec<MemoryItem>,
+    scopes: std::collections::HashMap<MemoryId, StoredMemoryScope>,
     forgotten: HashSet<MemoryId>,
     feedback: std::collections::HashMap<MemoryId, f32>,
     // The named-item altitude's point state, folded from the same topic: the
@@ -563,13 +627,24 @@ struct Projection {
     offsets: Vec<u64>,
 }
 
+#[derive(Default)]
+struct StoredMemoryScope {
+    user: Option<String>,
+    app: Option<String>,
+}
+
 impl Projection {
     // Fold one audit message in by decoding its typed entry: a `Forget` records a
     // tombstone, a `Feedback` accumulates a weight on its target, an `Item` becomes
     // a recalled item. A record whose id is not a recall id (a named-item key)
     // folds into the point-state map instead. A payload that is not a memory entry
     // is ignored. Pure, so it is unit-tested.
+    #[cfg(test)]
     fn absorb(&mut self, payload: &[u8], provenance: Provenance) {
+        self.absorb_scoped(payload, provenance, StoredMemoryScope::default());
+    }
+
+    fn absorb_scoped(&mut self, payload: &[u8], provenance: Provenance, scope: StoredMemoryScope) {
         // A named-item key is not a ULID, so `MemoryLogEntry` (whose ids are
         // `MemoryId`) fails to decode it, so fall through to the string-id wire
         // record, which the plane folds too.
@@ -583,6 +658,7 @@ impl Projection {
                 // the projection. Keep the id so a tombstone that arrives before its
                 // item (a cross-partition reorder) still suppresses it on arrival.
                 self.items.retain(|item| item.id != target);
+                self.scopes.remove(&target);
                 self.forgotten.insert(target);
             }
             MemoryLogEntry::Feedback { target, weight } => {
@@ -597,6 +673,7 @@ impl Projection {
                 if self.items.iter().any(|item| item.id == id) {
                     return;
                 }
+                self.scopes.insert(id, scope);
                 self.items.push(MemoryItem {
                     id,
                     payload: body,
@@ -631,7 +708,72 @@ impl Projection {
     }
 }
 
+fn folded_memory_items(
+    projection: &Projection,
+    scope: &MemoryScope,
+    query: &MemoryQuery,
+) -> Vec<MemoryItem> {
+    let agent_filter = query.agent.as_ref().or(scope.agent.as_ref());
+    let mut items: Vec<MemoryItem> = projection
+        .items
+        .iter()
+        .filter(|item| {
+            scope
+                .conversation
+                .is_none_or(|conversation| item.provenance.conversation_id == conversation)
+        })
+        .filter(|item| !projection.forgotten.contains(&item.id))
+        .filter(|item| {
+            let stored = projection.scopes.get(&item.id);
+            scope.user.as_ref().is_none_or(|expected| {
+                stored.and_then(|value| value.user.as_ref()) == Some(expected)
+            }) && scope.app.as_ref().is_none_or(|expected| {
+                stored.and_then(|value| value.app.as_ref()) == Some(expected)
+            })
+        })
+        .filter(|item| {
+            agent_filter.is_none_or(|agent| item.provenance.agent.as_ref() == Some(agent))
+        })
+        .cloned()
+        .collect();
+    items.reverse();
+    // Recent recall is recency alone, so feedback never reorders it.
+    if query.strategy != RecallStrategy::Recent && !projection.feedback.is_empty() {
+        for item in &mut items {
+            if let Some(weight) = projection.feedback.get(&item.id) {
+                item.score = Some(*weight);
+            }
+        }
+        items.sort_by(|left, right| {
+            right
+                .score
+                .unwrap_or(0.0)
+                .total_cmp(&left.score.unwrap_or(0.0))
+        });
+        for (rank, item) in items.iter_mut().enumerate() {
+            if let Some(score) = item.score {
+                // Feedback is not a strategy the caller picked, so its signal
+                // reads `Auto` in every backend.
+                item.signals.push(RecallSignal {
+                    strategy: RecallStrategy::Auto,
+                    rank,
+                    score: Some(score),
+                });
+            }
+        }
+    }
+    items.truncate(query.limit);
+    items
+}
+
 impl LogMemory {
+    fn stream_name(&self) -> Result<&str, LaserError> {
+        match self.stream.as_deref() {
+            Some(stream) => Ok(stream),
+            None => self.laser.stream_required(),
+        }
+    }
+
     /// A log-backed memory over an owned `Laser` (cheap to clone, shares the one
     /// connection). Hold a single instance to keep recall incremental: it folds
     /// only what was appended since the last recall, never rescanning from offset
@@ -706,13 +848,9 @@ impl LogMemory {
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, LaserError> {
         let topic = self.topic.to_string();
-        let stream = match &self.stream {
-            Some(stream) => stream.as_str(),
-            None => self.laser.stream_required()?,
-        };
         let action = crate::govern::GovernedAction {
             kind: crate::govern::ActionKind::MemoryWrite,
-            stream,
+            stream: self.stream_name()?,
             topic: &topic,
             source: provenance.agent.as_ref().map(|agent| agent.as_str()),
             target: None,
@@ -911,10 +1049,7 @@ impl LogMemory {
     // partition past our snapshot in the meantime. Otherwise the other caller
     // already folded those messages and re-applying would duplicate items.
     async fn catch_up(&self) -> Result<(), LaserError> {
-        let stream = match &self.stream {
-            Some(stream) => Identifier::named(stream)?,
-            None => Identifier::named(self.laser.stream_required()?)?,
-        };
+        let stream = Identifier::named(self.stream_name()?)?;
         let topic = self.topic.clone();
         let Some(details) = self.laser.client().get_topic(&stream, &topic).await? else {
             return Ok(());
@@ -958,10 +1093,31 @@ impl LogMemory {
                 continue; // a concurrent catch_up already folded this partition
             }
             for message in messages {
-                let Ok(provenance) = Provenance::try_from(&message) else {
+                // One header decode serves provenance and the memory scope. A
+                // record whose headers do not decode is not a memory record.
+                let Ok(Some(headers)) = message.user_headers_map() else {
                     continue;
                 };
-                projection.absorb(&message.payload, provenance);
+                let Ok(provenance) = crate::provenance::provenance_from_headers(&headers) else {
+                    continue;
+                };
+                let text = |name: &str| -> Option<String> {
+                    let key = HeaderKey::from_str(name).ok()?;
+                    headers.get(&key)?.as_str().ok().map(str::to_owned)
+                };
+                if text(laser_wire::headers::MEMORY_NAMESPACE).as_deref()
+                    != Some(self.namespace.as_str())
+                {
+                    continue;
+                }
+                projection.absorb_scoped(
+                    &message.payload,
+                    provenance,
+                    StoredMemoryScope {
+                        user: text(laser_wire::headers::MEMORY_USER),
+                        app: text(laser_wire::headers::MEMORY_APP),
+                    },
+                );
             }
             projection.offsets[partition as usize] = next_offset;
         }
@@ -978,6 +1134,13 @@ impl LogMemory {
         scope: &MemoryScope,
         query: &MemoryQuery,
     ) -> Result<Vec<MemoryItem>, LaserError> {
+        if scope
+            .stream
+            .as_deref()
+            .is_some_and(|stream| self.stream_name().ok() != Some(stream))
+        {
+            return Ok(Vec::new());
+        }
         self.catch_up().await?;
         let projection = self.projection.lock().await;
         // `items` is in per-partition arrival order, not globally timestamp-sorted, so
@@ -990,41 +1153,7 @@ impl LogMemory {
         // The tail is then only approximately most-recent, since items interleave
         // across partitions. The recall filter honors the scope it was stored under,
         // and an explicit `query.agent` narrows it further, overriding `scope.agent`.
-        let agent_filter = query.agent.as_ref().or(scope.agent.as_ref());
-        let mut items: Vec<MemoryItem> = projection
-            .items
-            .iter()
-            .filter(|item| {
-                scope
-                    .conversation
-                    .is_none_or(|conversation| item.provenance.conversation_id == conversation)
-            })
-            .filter(|item| !projection.forgotten.contains(&item.id))
-            .filter(|item| {
-                agent_filter.is_none_or(|agent| item.provenance.agent.as_ref() == Some(agent))
-            })
-            .cloned()
-            .collect();
-        // Apply any accumulated feedback as a score. When feedback exists, sort
-        // promoted items to the front (stable, so recency breaks ties), the
-        // log-native re-rank `improve` feeds. Without feedback the order stays the
-        // most-recent tail, matching the pre-feedback behavior.
-        if !projection.feedback.is_empty() {
-            for item in &mut items {
-                if let Some(weight) = projection.feedback.get(&item.id) {
-                    item.score = Some(*weight);
-                }
-            }
-            items.sort_by(|a, b| {
-                let a = a.score.unwrap_or(0.0);
-                let b = b.score.unwrap_or(0.0);
-                b.total_cmp(&a)
-            });
-            items.truncate(query.limit);
-        } else if items.len() > query.limit {
-            items = items.split_off(items.len() - query.limit);
-        }
-        Ok(items)
+        Ok(folded_memory_items(&projection, scope, query))
     }
 
     /// Recall by reading the managed key-value read view. Scans the memory
@@ -1037,70 +1166,108 @@ impl LogMemory {
         scope: &MemoryScope,
         query: &MemoryQuery,
     ) -> Result<Vec<MemoryItem>, LaserError> {
-        let Some(conversation) = scope.conversation else {
-            return Ok(Vec::new());
-        };
-        let kv = self.laser.kv(self.namespace.clone());
-        // One conversation's memory is bounded by the lens, so page through it and
-        // keep the most-recent `limit`. The scan is key-ascending and ids are
-        // time-ordered ULIDs, so the tail after sorting is the most recent.
-        let mut entries = Vec::new();
-        let mut cursor: Option<Vec<u8>> = None;
-        loop {
-            let mut scan = kv.scan().conversation(conversation);
-            if let Some(resume) = &cursor {
-                scan = scan.cursor(resume);
-            }
-            let page = scan.fetch().await?;
-            let done = page.cursor.is_none();
-            cursor = page.cursor;
-            entries.extend(page.entries);
-            if done {
-                break;
-            }
-        }
-        let agent_filter = query.agent.as_ref().or(scope.agent.as_ref());
-        let mut items: Vec<MemoryItem> = entries
-            .into_iter()
-            .filter_map(|entry| self.item_from_entry(conversation, entry))
-            .filter(|item| {
-                agent_filter.is_none_or(|agent| item.provenance.agent.as_ref() == Some(agent))
-            })
-            .collect();
-        items.sort_by_key(|item| item.id);
-        if items.len() > query.limit {
-            items = items.split_off(items.len() - query.limit);
-        }
-        Ok(items)
-    }
-
-    // Rebuild a memory item from a read-view entry, or `None` when the key is a
-    // named-item key (not a recall id) or the row carries no memory scope.
-    #[cfg(feature = "kv")]
-    fn item_from_entry(
-        &self,
-        conversation: ConversationId,
-        entry: laser_wire::kv::KvEntry,
-    ) -> Option<MemoryItem> {
-        let id: MemoryId = entry.key_str()?.parse().ok()?;
-        let stored = *entry.scope?;
-        let kind = stored
-            .kind
+        if scope
+            .stream
             .as_deref()
-            .map(MemoryKind::from_word)
-            .unwrap_or_default();
-        let mut provenance = Provenance::builder().conversation_id(conversation).build();
-        provenance.agent = stored.agent.as_deref().and_then(|agent| agent.parse().ok());
-        Some(MemoryItem {
-            id,
-            payload: entry.value,
-            provenance,
-            kind,
-            source: stored.source,
-            score: None,
-            signals: Vec::new(),
+            .is_some_and(|stream| self.stream_name().ok() != Some(stream))
+        {
+            return Ok(Vec::new());
+        }
+        let kv = self.laser.kv(self.namespace.clone());
+        recall_kv_pages(scope, query, |cursor| {
+            let mut scan = kv.scan();
+            if let Some(conversation) = scope.conversation {
+                scan = scan.conversation(conversation);
+            }
+            if let Some(cursor) = cursor {
+                scan = scan.cursor(cursor);
+            }
+            async move { scan.fetch().await }
         })
+        .await
     }
+}
+
+#[cfg(feature = "kv")]
+async fn recall_kv_pages<F, Fut>(
+    scope: &MemoryScope,
+    query: &MemoryQuery,
+    mut fetch: F,
+) -> Result<Vec<MemoryItem>, LaserError>
+where
+    F: FnMut(Option<Vec<u8>>) -> Fut,
+    Fut: std::future::Future<Output = Result<laser_wire::kv::KvPage, LaserError>>,
+{
+    if query.limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut selected = std::collections::BTreeMap::new();
+    let mut cursor = None;
+    loop {
+        let page = fetch(cursor.clone()).await?;
+        for entry in page.entries {
+            if let Some(item) = memory_item_from_entry(scope, query.agent.as_ref(), entry) {
+                selected.insert(item.id, item);
+                if selected.len() > query.limit {
+                    selected.pop_first();
+                }
+            }
+        }
+        let Some(next) = page.cursor else { break };
+        if cursor.as_ref() == Some(&next) {
+            return Err(LaserError::Protocol(
+                "memory scan cursor did not advance".to_owned(),
+            ));
+        }
+        cursor = Some(next);
+    }
+    Ok(selected.into_values().rev().collect())
+}
+
+#[cfg(feature = "kv")]
+fn memory_item_from_entry(
+    scope: &MemoryScope,
+    agent: Option<&AgentId>,
+    entry: laser_wire::kv::KvEntry,
+) -> Option<MemoryItem> {
+    let id: MemoryId = entry.key_str()?.parse().ok()?;
+    let stored = *entry.scope?;
+    let conversation = match stored.conversation.as_deref() {
+        Some(value) => value.parse().ok()?,
+        None => scope.conversation?,
+    };
+    let agent = agent.or(scope.agent.as_ref());
+    if scope
+        .conversation
+        .is_some_and(|expected| expected != conversation)
+        || scope
+            .user
+            .as_ref()
+            .is_some_and(|expected| stored.user.as_ref() != Some(expected))
+        || scope
+            .app
+            .as_ref()
+            .is_some_and(|expected| stored.app.as_ref() != Some(expected))
+        || agent.is_some_and(|expected| stored.agent.as_deref() != Some(expected.as_str()))
+    {
+        return None;
+    }
+    let kind = stored
+        .kind
+        .as_deref()
+        .map(MemoryKind::from_word)
+        .unwrap_or_default();
+    let mut provenance = Provenance::builder().conversation_id(conversation).build();
+    provenance.agent = stored.agent.as_deref().and_then(|value| value.parse().ok());
+    Some(MemoryItem {
+        id,
+        payload: entry.value,
+        provenance,
+        kind,
+        source: stored.source,
+        score: None,
+        signals: Vec::new(),
+    })
 }
 
 impl Memory for LogMemory {
@@ -1111,6 +1278,16 @@ impl Memory for LogMemory {
     ) -> Result<MemoryId, LaserError> {
         self.append(scope, MemoryId::new(), MemoryKind::Fact, payload)
             .await
+    }
+
+    async fn append(
+        &self,
+        scope: &MemoryScope,
+        id: MemoryId,
+        kind: MemoryKind,
+        payload: Vec<u8>,
+    ) -> Result<MemoryId, LaserError> {
+        LogMemory::append(self, scope, id, kind, payload).await
     }
 
     async fn recall(
@@ -1151,28 +1328,14 @@ impl Memory for LogMemory {
             weight: feedback.weight,
         };
         let provenance = Self::provenance(scope, id.to_string());
-        self.laser
-            .send_agent_as(
-                crate::govern::ActionKind::MemoryWrite,
-                AgentTopic::Custom(&self.topic),
-                entry.encode()?,
-                &provenance,
-            )
-            .await?;
+        self.publish(&provenance, scope, entry.encode()?).await?;
         Ok(id)
     }
 
     async fn forget(&self, scope: &MemoryScope, id: MemoryId) -> Result<(), LaserError> {
         let entry = MemoryLogEntry::Forget { target: id };
         let provenance = Self::provenance(scope, MemoryId::new().to_string());
-        self.laser
-            .send_agent_as(
-                crate::govern::ActionKind::MemoryWrite,
-                AgentTopic::Custom(&self.topic),
-                entry.encode()?,
-                &provenance,
-            )
-            .await?;
+        self.publish(&provenance, scope, entry.encode()?).await?;
         Ok(())
     }
 }
@@ -1274,9 +1437,10 @@ impl<M> DefaultConsolidator<M> {
 }
 
 impl<M, S> DefaultConsolidator<M, S> {
-    /// Add the summarize pass: session-lifetime `Message` items in the scope
-    /// are folded through `summarizer` into one durable `Summary` per pass.
-    /// The SDK ships no model client, the seam is yours.
+    /// Add the summarize pass. `Message` items in the scope are folded through
+    /// `summarizer` into one durable `Summary` per conversation, stored under
+    /// the consolidation scope narrowed to that conversation. The SDK ships no
+    /// model client, the seam is yours.
     pub fn with_summarizer<S2>(self, summarizer: S2) -> DefaultConsolidator<M, S2> {
         DefaultConsolidator {
             memory: self.memory,
@@ -1301,21 +1465,30 @@ impl<M: Memory + Sync, S: Summarizer + Sync> Consolidator for DefaultConsolidato
         let mut items = self.memory.recall(scope, &query).await?;
         let mut report = ConsolidationReport::default();
 
-        // The summarize pass: fold this scope's session messages into one
-        // durable summary through the injected seam. Only `Message`-kind items
-        // participate, durable facts are never re-written by a summarizer. The
-        // summary lands through the backend's plain `remember` (the `Memory`
-        // trait carries no kind. Tagging `Summary` is the handle's remember
-        // builder's concern when the application stores one directly).
+        // Fold Message items into one durable Summary per conversation, so each
+        // summary stays recallable in the conversation it distills. Custom
+        // backends can keep their remember fallback.
         if let Some(summarizer) = &self.summarizer {
             let sessions: Vec<&MemoryItem> = items
                 .iter()
                 .filter(|item| item.kind == MemoryKind::Message)
                 .collect();
             if !sessions.is_empty() {
-                let bodies = sessions.iter().map(|item| item.payload.clone()).collect();
-                let summary = summarizer.summarize(bodies).await?;
-                self.memory.remember(scope, summary).await?;
+                for (conversation, turns) in by_conversation(&sessions) {
+                    let bodies = turns.iter().map(|item| item.payload.clone()).collect();
+                    let summary = summarizer.summarize(bodies).await?;
+                    let mut summary_scope = scope.clone();
+                    summary_scope.conversation = Some(conversation);
+                    summary_scope.lifetime = Lifetime::Durable;
+                    self.memory
+                        .append(
+                            &summary_scope,
+                            MemoryId::new(),
+                            MemoryKind::Summary,
+                            summary,
+                        )
+                        .await?;
+                }
                 report.summarized = sessions.len();
                 if self.prune_summarized {
                     let ids: Vec<MemoryId> = sessions.iter().map(|item| item.id).collect();
@@ -1344,6 +1517,20 @@ impl<M: Memory + Sync, S: Summarizer + Sync> Consolidator for DefaultConsolidato
     }
 }
 
+// Group summarized turns by conversation, in the order each conversation
+// first appears in the recall, keeping each group's recall order.
+fn by_conversation<'a>(items: &[&'a MemoryItem]) -> Vec<(ConversationId, Vec<&'a MemoryItem>)> {
+    let mut groups: Vec<(ConversationId, Vec<&'a MemoryItem>)> = Vec::new();
+    for &item in items {
+        let conversation = item.provenance.conversation_id;
+        match groups.iter_mut().find(|(known, _)| *known == conversation) {
+            Some((_, turns)) => turns.push(item),
+            None => groups.push((conversation, vec![item])),
+        }
+    }
+    groups
+}
+
 /// Wraps any [`Memory`] with a [`Reranker`] second stage: `recall` runs the inner
 /// backend's retrieval, then reorders the candidates through the reranker when the
 /// query carries a `semantic` string (the rerank query). `remember` / `improve` /
@@ -1368,6 +1555,16 @@ impl<M: Memory + Sync, R: Reranker + Sync> Memory for RerankedMemory<M, R> {
         payload: Vec<u8>,
     ) -> Result<MemoryId, LaserError> {
         self.inner.remember(scope, payload).await
+    }
+
+    async fn append(
+        &self,
+        scope: &MemoryScope,
+        id: MemoryId,
+        kind: MemoryKind,
+        payload: Vec<u8>,
+    ) -> Result<MemoryId, LaserError> {
+        self.inner.append(scope, id, kind, payload).await
     }
 
     async fn recall(
@@ -1553,6 +1750,16 @@ impl<E: Embedder + Sync> Memory for VectorMemory<E> {
             .await
     }
 
+    async fn append(
+        &self,
+        scope: &MemoryScope,
+        id: MemoryId,
+        kind: MemoryKind,
+        payload: Vec<u8>,
+    ) -> Result<MemoryId, LaserError> {
+        VectorMemory::append(self, scope, id, kind, payload).await
+    }
+
     async fn recall(
         &self,
         scope: &MemoryScope,
@@ -1561,7 +1768,10 @@ impl<E: Embedder + Sync> Memory for VectorMemory<E> {
         // Which signals this strategy fuses. `Auto`/`Semantic`/`Hybrid` use the
         // embedding. `Keyword`/`Hybrid` add lexical overlap. `Keyword` skips the
         // embed call entirely (no model round-trip when only lexical is wanted).
-        let wants_semantic = !matches!(query.strategy, RecallStrategy::Keyword);
+        let wants_semantic = !matches!(
+            query.strategy,
+            RecallStrategy::Keyword | RecallStrategy::Recent
+        );
         let wants_keyword = matches!(
             query.strategy,
             RecallStrategy::Keyword | RecallStrategy::Hybrid
@@ -1592,47 +1802,93 @@ impl<E: Embedder + Sync> Memory for VectorMemory<E> {
                         .app
                         .as_ref()
                         .is_none_or(|a| entry.scope.app.as_ref() == Some(a))
+                    && scope
+                        .stream
+                        .as_ref()
+                        .is_none_or(|stream| entry.scope.stream.as_ref() == Some(stream))
             })
             .collect();
 
-        let any_feedback = matched.iter().any(|entry| entry.feedback != 0.0);
+        // Recent recall is recency alone, so feedback never reorders it.
+        let feedback_ranks = query.strategy != RecallStrategy::Recent;
+        let any_feedback = feedback_ranks && matched.iter().any(|entry| entry.feedback != 0.0);
 
-        // Fuse the active signals into one score: semantic similarity, lexical
-        // overlap, and the accumulated feedback boost. A signal that is off
-        // contributes nothing, so `Auto` with a query reduces to the prior
-        // similarity-plus-feedback behavior exactly.
-        let score = |entry: &VectorEntry| {
-            let mut total = entry.feedback;
-            if let Some(query_embedding) = &query_embedding {
-                total += cosine(query_embedding, &entry.embedding);
-            }
-            if let Some(query_tokens) = &query_tokens {
-                total += keyword_score(query_tokens, &entry.item.payload);
-            }
-            total
-        };
-
+        let mut scored: Vec<(f32, &VectorEntry, Vec<RecallSignal>)> = matched
+            .iter()
+            .map(|&entry| {
+                let mut signals = Vec::new();
+                if let Some(embedding) = &query_embedding {
+                    signals.push(RecallSignal {
+                        strategy: RecallStrategy::Semantic,
+                        rank: 0,
+                        score: Some(cosine(embedding, &entry.embedding)),
+                    });
+                }
+                if let Some(tokens) = &query_tokens {
+                    signals.push(RecallSignal {
+                        strategy: RecallStrategy::Keyword,
+                        rank: 0,
+                        score: Some(keyword_score(tokens, &entry.item.payload)),
+                    });
+                }
+                if feedback_ranks && entry.feedback != 0.0 {
+                    signals.push(RecallSignal {
+                        strategy: RecallStrategy::Auto,
+                        rank: 0,
+                        score: Some(entry.feedback),
+                    });
+                }
+                let score = signals
+                    .iter()
+                    .map(|signal| signal.score.unwrap_or(0.0))
+                    .sum();
+                (score, entry, signals)
+            })
+            .collect();
         let any_query_signal = query_embedding.is_some() || query_tokens.is_some();
         if any_query_signal || any_feedback {
-            // Score each entry once, then sort, so the cosine is not recomputed
-            // per comparison.
-            let mut scored: Vec<(f32, &VectorEntry)> =
-                matched.iter().map(|&entry| (score(entry), entry)).collect();
-            scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+            for strategy in [
+                RecallStrategy::Semantic,
+                RecallStrategy::Keyword,
+                RecallStrategy::Auto,
+            ] {
+                let mut ranks: Vec<(usize, f32)> = scored
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, (_, _, signals))| {
+                        signals
+                            .iter()
+                            .find(|signal| signal.strategy == strategy)
+                            .map(|signal| (index, signal.score.unwrap_or(0.0)))
+                    })
+                    .collect();
+                ranks.sort_by(|left, right| right.1.total_cmp(&left.1));
+                for (rank, (index, _)) in ranks.into_iter().enumerate() {
+                    if let Some(signal) = scored[index]
+                        .2
+                        .iter_mut()
+                        .find(|signal| signal.strategy == strategy)
+                    {
+                        signal.rank = rank;
+                    }
+                }
+            }
+            scored.sort_by(|left, right| right.0.total_cmp(&left.0));
             Ok(scored
                 .into_iter()
                 .take(query.limit)
-                .map(|(score, entry)| {
+                .map(|(score, entry, signals)| {
                     let mut item = entry.item.clone();
                     item.score = Some(score);
+                    item.signals = signals;
                     item
                 })
                 .collect())
         } else {
-            // No query signal and no feedback: the most recent `limit`.
-            let start = matched.len().saturating_sub(query.limit);
-            Ok(matched[start..]
-                .iter()
+            Ok(matched
+                .into_iter()
+                .rev()
+                .take(query.limit)
                 .map(|entry| entry.item.clone())
                 .collect())
         }
@@ -1697,7 +1953,7 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 fn tokenize(text: &str) -> HashSet<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|token| !token.is_empty())
-        .map(str::to_ascii_lowercase)
+        .map(str::to_lowercase)
         .collect()
 }
 
@@ -1955,6 +2211,15 @@ impl MemoryHandle {
         }
     }
 
+    /// A standalone in-process vector handle over `embedder`, with no `Laser`
+    /// and no governance. For a governed vector handle use
+    /// [`Laser::memory_with`] with [`MemoryBackend::Vector`].
+    pub fn vector(embedder: impl Embedder + Sync + 'static) -> Self {
+        Self::Vector(std::sync::Arc::new(VectorMemory::new(SharedEmbedder(
+            std::sync::Arc::new(embedder),
+        ))))
+    }
+
     /// Register the embedding seam for similarity recall. It configures the
     /// in-process vector index. The durable log model recalls by recency, so an
     /// embedder on a log handle is unused (build with
@@ -2086,7 +2351,7 @@ impl MemoryHandle {
             }
             // `remember` special-cases Custom before reaching here, but the match
             // must be exhaustive: delegate, letting the backend mint its own id.
-            MemoryHandle::Custom(memory) => memory.remember(scope, payload).await,
+            MemoryHandle::Custom(memory) => memory.append(scope, id, kind, payload).await,
         }
     }
 
@@ -2182,7 +2447,13 @@ impl MemoryHandle {
         match self {
             MemoryHandle::Log(memory) => memory.recall_folded(scope, query).await,
             MemoryHandle::Vector(memory) => Memory::recall(memory.as_ref(), scope, query).await,
-            MemoryHandle::Reranked { inner, .. } => recall_folded_boxed(inner, scope, query).await,
+            MemoryHandle::Reranked { inner, reranker } => {
+                let items = recall_folded_boxed(inner, scope, query).await?;
+                match &query.semantic {
+                    Some(text) => Reranker::rerank(reranker, text, items).await,
+                    None => Ok(items),
+                }
+            }
             // A custom backend has no separate in-process fold: its own recall is
             // the closest, so folded recall delegates to it.
             MemoryHandle::Custom(memory) => memory.recall(scope, query).await,
@@ -2257,6 +2528,16 @@ impl Memory for MemoryHandle {
             .await
     }
 
+    async fn append(
+        &self,
+        scope: &MemoryScope,
+        id: MemoryId,
+        kind: MemoryKind,
+        payload: Vec<u8>,
+    ) -> Result<MemoryId, LaserError> {
+        self.append_id(scope, id, kind, payload).await
+    }
+
     async fn recall(
         &self,
         scope: &MemoryScope,
@@ -2306,6 +2587,21 @@ impl Memory for &MemoryHandle {
         payload: Vec<u8>,
     ) -> Result<MemoryId, LaserError> {
         Memory::remember(*self, scope, payload).await
+    }
+
+    // An explicit future preserves the trait's Sync bound on a borrowed handle.
+    #[allow(clippy::manual_async_fn)]
+    fn append(
+        &self,
+        scope: &MemoryScope,
+        id: MemoryId,
+        kind: MemoryKind,
+        payload: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<MemoryId, LaserError>> + Send
+    where
+        Self: Sync,
+    {
+        async move { Memory::append(*self, scope, id, kind, payload).await }
     }
 
     async fn recall(
@@ -2495,6 +2791,20 @@ impl RememberBuilder<'_> {
         self
     }
 
+    /// Attribute to an end user, the identity the memory is about.
+    #[must_use]
+    pub fn user(mut self, user: impl Into<String>) -> Self {
+        self.scope.user = Some(user.into());
+        self
+    }
+
+    /// Attribute to an application or org within the deployment.
+    #[must_use]
+    pub fn application(mut self, application: impl Into<String>) -> Self {
+        self.scope.app = Some(application.into());
+        self
+    }
+
     /// Store as durable, shared across conversations (default is session-scoped).
     #[must_use]
     pub fn durable(mut self) -> Self {
@@ -2576,9 +2886,8 @@ impl RecallBuilder<'_> {
         self
     }
 
-    /// Fuse the semantic and keyword signals for `text` by reciprocal rank
-    /// (sets the `Hybrid` strategy). Each fused item's `signals` keeps the
-    /// per-signal attribution.
+    /// Combine semantic similarity, keyword overlap, and feedback by addition for `text`.
+    /// Each item's `signals` keeps the individual scores and ranks.
     #[must_use]
     pub fn hybrid(mut self, text: impl Into<String>) -> Self {
         self.semantic = Some(text.into());
@@ -2602,11 +2911,38 @@ impl RecallBuilder<'_> {
         self
     }
 
+    /// Narrow to an end user.
+    #[must_use]
+    pub fn user(mut self, user: impl Into<String>) -> Self {
+        self.scope.user = Some(user.into());
+        self
+    }
+
+    /// Narrow to an application or org within the deployment.
+    #[must_use]
+    pub fn application(mut self, application: impl Into<String>) -> Self {
+        self.scope.app = Some(application.into());
+        self
+    }
+
+    /// Narrow to items remembered on this stream.
+    #[must_use]
+    pub fn stream(mut self, stream: impl Into<String>) -> Self {
+        self.scope.stream = Some(stream.into());
+        self
+    }
+
     /// Cap the number of items returned.
     #[must_use]
     pub fn limit(mut self, limit: usize) -> Self {
         self.limit = limit;
         self
+    }
+
+    /// Run the recall and render the items as one prompt-ready block under
+    /// `token_budget`, see [`to_context_block`].
+    pub async fn block(self, token_budget: Option<usize>) -> Result<String, LaserError> {
+        Ok(to_context_block(&self.fetch().await?, token_budget))
     }
 
     /// Run the recall.
@@ -2687,6 +3023,74 @@ mod tests {
         assert_eq!(items[0].payload, b"hi");
     }
 
+    #[tokio::test]
+    async fn given_user_and_application_when_building_then_should_reach_the_backend_scope() {
+        type Seen = std::sync::Arc<std::sync::Mutex<Vec<MemoryScope>>>;
+        struct ScopeProbe(Seen);
+        impl Memory for ScopeProbe {
+            async fn remember(
+                &self,
+                scope: &MemoryScope,
+                _payload: Vec<u8>,
+            ) -> Result<MemoryId, LaserError> {
+                self.0.lock().expect("lock").push(scope.clone());
+                Ok(MemoryId::new())
+            }
+            async fn recall(
+                &self,
+                scope: &MemoryScope,
+                _query: &MemoryQuery,
+            ) -> Result<Vec<MemoryItem>, LaserError> {
+                self.0.lock().expect("lock").push(scope.clone());
+                let provenance = Provenance::builder()
+                    .conversation_id(ConversationId::new())
+                    .build();
+                Ok(vec![MemoryItem::plain(
+                    MemoryId::new(),
+                    b"node-7 rotates keys monthly".to_vec(),
+                    provenance,
+                )])
+            }
+            async fn improve(
+                &self,
+                _scope: &MemoryScope,
+                _feedback: Feedback,
+            ) -> Result<MemoryId, LaserError> {
+                Ok(MemoryId::new())
+            }
+            async fn forget(&self, _scope: &MemoryScope, _id: MemoryId) -> Result<(), LaserError> {
+                Ok(())
+            }
+        }
+
+        let seen = Seen::default();
+        let handle = MemoryHandle::Custom(std::sync::Arc::new(ScopeProbe(seen.clone())));
+        handle
+            .remember(b"fact".to_vec())
+            .user("operator-1")
+            .application("fleet")
+            .stream("fleet-memory")
+            .send()
+            .await
+            .expect("the scoped remember should succeed");
+        let block = handle
+            .recall(ConversationId::new())
+            .user("operator-1")
+            .application("fleet")
+            .stream("fleet-memory")
+            .block(Some(100))
+            .await
+            .expect("the block should render");
+        assert_eq!(block, "node-7 rotates keys monthly");
+        let seen = seen.lock().expect("lock");
+        assert_eq!(seen.len(), 2);
+        for scope in seen.iter() {
+            assert_eq!(scope.user.as_deref(), Some("operator-1"));
+            assert_eq!(scope.app.as_deref(), Some("fleet"));
+            assert_eq!(scope.stream.as_deref(), Some("fleet-memory"));
+        }
+    }
+
     #[test]
     fn given_a_log_entry_when_encoded_then_the_wire_memory_record_decodes_it() {
         // The plane folds the memory topic through `laser_wire::memory::MemoryRecord`,
@@ -2696,7 +3100,7 @@ mod tests {
         let entry = MemoryLogEntry::Item {
             id,
             kind: MemoryKind::Message,
-            body: b"checkout is slow".to_vec(),
+            body: b"auth is slow".to_vec(),
         };
         let payload = entry.encode().expect("entry encodes");
         let record: laser_wire::memory::MemoryRecord =
@@ -2709,7 +3113,7 @@ mod tests {
             } => {
                 assert_eq!(rid, id.to_string());
                 assert_eq!(kind, "message");
-                assert_eq!(body, b"checkout is slow");
+                assert_eq!(body, b"auth is slow");
             }
             other => panic!("expected an Item record, got {other:?}"),
         }
@@ -2827,8 +3231,9 @@ mod tests {
     async fn given_session_messages_when_consolidated_then_should_store_one_summary() {
         let memory = LogMemoryStub::default();
         let scope = MemoryScope::default();
+        let conversation = ConversationId::new();
         for body in [b"turn one".to_vec(), b"turn two".to_vec()] {
-            memory.push(MemoryKind::Message, body);
+            memory.push_in(MemoryKind::Message, body, conversation);
         }
         memory.push(MemoryKind::Fact, b"a durable fact".to_vec());
         let consolidator =
@@ -2842,6 +3247,60 @@ mod tests {
             memory.bodies().iter().any(|body| body == b"summary of 2"),
             "the summary landed"
         );
+    }
+
+    #[tokio::test]
+    async fn given_turns_in_two_conversations_when_consolidated_then_should_store_one_summary_each()
+    {
+        let memory = LogMemoryStub::default();
+        let first = ConversationId::new();
+        let second = ConversationId::new();
+        memory.push_in(MemoryKind::Message, b"first a".to_vec(), first);
+        memory.push_in(MemoryKind::Message, b"second a".to_vec(), second);
+        memory.push_in(MemoryKind::Message, b"first b".to_vec(), first);
+        let scope = MemoryScope::builder()
+            .agent("planner".parse().expect("valid agent"))
+            .build();
+        let consolidator =
+            DefaultConsolidator::new(memory.clone(), 100).with_summarizer(StubSummarizer);
+        let report = Consolidator::consolidate(&consolidator, &scope)
+            .await
+            .expect("consolidates");
+        assert_eq!(report.summarized, 3);
+        let summaries: Vec<_> = memory
+            .appended()
+            .into_iter()
+            .map(|(scope, kind, body)| {
+                (scope.conversation, scope.agent, scope.lifetime, kind, body)
+            })
+            .collect();
+        let planner = Some("planner".parse().expect("valid agent"));
+        assert_eq!(
+            summaries,
+            [
+                (
+                    Some(first),
+                    planner.clone(),
+                    Lifetime::Durable,
+                    MemoryKind::Summary,
+                    b"summary of 2".to_vec()
+                ),
+                (
+                    Some(second),
+                    planner,
+                    Lifetime::Durable,
+                    MemoryKind::Summary,
+                    b"summary of 1".to_vec()
+                ),
+            ]
+        );
+        let stored = memory.items.lock().expect("stub lock").clone();
+        let summary_conversations: Vec<_> = stored
+            .iter()
+            .filter(|item| item.kind == MemoryKind::Summary)
+            .map(|item| item.provenance.conversation_id)
+            .collect();
+        assert_eq!(summary_conversations, [first, second]);
     }
 
     #[tokio::test]
@@ -2859,22 +3318,32 @@ mod tests {
         assert_eq!(report.pruned, 1, "the folded turn is forgotten");
     }
 
+    // One typed append the stub saw: its scope, kind, and body.
+    type Appended = (MemoryScope, MemoryKind, Vec<u8>);
+
     /// A minimal in-memory `Memory` for consolidator tests: pushes are visible
     /// to recall, forget removes, nothing ranks. Clones share the store so a
     /// test can hand one clone to the consolidator and assert on the other.
     #[derive(Clone, Default)]
     struct LogMemoryStub {
         items: std::sync::Arc<std::sync::Mutex<Vec<MemoryItem>>>,
+        appended: std::sync::Arc<std::sync::Mutex<Vec<Appended>>>,
     }
 
     impl LogMemoryStub {
         fn push(&self, kind: MemoryKind, payload: Vec<u8>) {
-            let provenance = Provenance::builder()
-                .conversation_id(crate::types::ConversationId::new())
-                .build();
+            self.push_in(kind, payload, crate::types::ConversationId::new());
+        }
+
+        fn push_in(&self, kind: MemoryKind, payload: Vec<u8>, conversation: ConversationId) {
+            let provenance = Provenance::builder().conversation_id(conversation).build();
             let mut item = MemoryItem::plain(MemoryId::new(), payload, provenance);
             item.kind = kind;
             self.items.lock().expect("stub lock").push(item);
+        }
+
+        fn appended(&self) -> Vec<Appended> {
+            self.appended.lock().expect("stub lock").clone()
         }
 
         fn bodies(&self) -> Vec<Vec<u8>> {
@@ -2901,6 +3370,21 @@ mod tests {
                 .lock()
                 .expect("stub lock")
                 .push(MemoryItem::plain(id, payload, provenance));
+            Ok(id)
+        }
+
+        async fn append(
+            &self,
+            scope: &MemoryScope,
+            id: MemoryId,
+            kind: MemoryKind,
+            payload: Vec<u8>,
+        ) -> Result<MemoryId, LaserError> {
+            self.appended
+                .lock()
+                .expect("stub lock")
+                .push((scope.clone(), kind, payload.clone()));
+            self.push_in(kind, payload, scope.conversation.unwrap_or_default());
             Ok(id)
         }
 
@@ -2976,6 +3460,23 @@ mod tests {
             .conversation_id(crate::types::ConversationId::new())
             .build();
         MemoryItem::plain(MemoryId::new(), body.as_bytes().to_vec(), provenance)
+    }
+
+    #[test]
+    fn given_a_text_payload_when_read_then_should_return_the_text_and_json() {
+        let item = context_item(r#"{"city":"Oslo"}"#);
+        assert_eq!(item.text(), r#"{"city":"Oslo"}"#);
+        let value: serde_json::Value = item.json().expect("json");
+        assert_eq!(value["city"], "Oslo");
+    }
+
+    #[test]
+    fn given_a_non_json_payload_when_decoded_then_should_fail_with_a_codec_error() {
+        let item = context_item("plain words");
+        assert!(matches!(
+            item.json::<serde_json::Value>(),
+            Err(LaserError::Codec(_))
+        ));
     }
 
     #[test]
@@ -3242,6 +3743,33 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn given_a_reranked_handle_when_recalling_folded_then_should_apply_the_reranker() {
+        let handle = MemoryHandle::vector(WordEmbedder).reranker(ReverseReranker);
+        let conversation = ConversationId::new();
+        for body in ["the cat sat", "the dog ran"] {
+            handle
+                .remember(body)
+                .scope(conversation)
+                .send()
+                .await
+                .expect("remember");
+        }
+        let scope = MemoryScope::builder().conversation(conversation).build();
+        let query = MemoryQuery::builder().semantic("cat".to_owned()).build();
+        let hits = handle
+            .recall_folded(&scope, &query)
+            .await
+            .expect("folded recall");
+        assert_eq!(
+            hits.iter()
+                .map(|item| item.payload.as_slice())
+                .collect::<Vec<_>>(),
+            [b"the dog ran".as_slice(), b"the cat sat"],
+            "the reranker reversed the similarity order"
+        );
+    }
+
     #[test]
     fn given_the_same_content_when_addressed_then_should_produce_the_same_id() {
         let owner = MemoryScope::builder()
@@ -3257,14 +3785,67 @@ mod tests {
 
     #[test]
     fn given_a_known_content_when_addressed_then_should_match_the_cross_sdk_id() {
-        // Pins the content-addressed id to a golden value shared with the Python
-        // reference engine, so a fact deduped in one SDK has the same id in the
-        // other. Owner: agent "agent", no stream, kind Fact, body "x".
-        let owner = MemoryScope::builder()
+        // Pins the content-addressed id to golden values every SDK reproduces, so
+        // a fact deduped in one SDK has the same id in the others.
+        let agent_only = MemoryScope::builder()
             .agent("agent".parse().expect("valid agent"))
             .build();
-        let id = MemoryId::content(&owner, MemoryKind::Fact, b"x");
-        assert_eq!(id.to_string(), "1A9GVS6SJ6SNS4KY0H19130WCW");
+        let full_owner = MemoryScope::builder()
+            .stream("laser".to_owned())
+            .agent("agent".parse().expect("valid agent"))
+            .user("alice".to_owned())
+            .app("console".to_owned())
+            .build();
+        let user_only = MemoryScope::builder().user("alice".to_owned()).build();
+        let cases = [
+            (
+                &agent_only,
+                MemoryKind::Fact,
+                "63FZWE3WTSCVXAY845QK4TMVWM",
+                0xc37f_f8e1_f359_66fa_af20_85bc_c9aa_6f94_u128,
+            ),
+            (
+                &full_owner,
+                MemoryKind::Fact,
+                "28429K3B8MPSM8WHDQR474827P",
+                0x4820_9331_ad14_b668_8e45_b7c1_0e44_08f6,
+            ),
+            (
+                &user_only,
+                MemoryKind::Procedure,
+                "3E6HJGHKFDBMQ91TCJEHV28X40",
+                0x6e34_6508_cded_5d2e_90e9_9274_7624_7480,
+            ),
+        ];
+        for (owner, kind, rendered, value) in cases {
+            let id = MemoryId::content(owner, kind, b"x");
+            assert_eq!(id.as_u128(), value);
+            assert_eq!(id.to_string(), rendered);
+        }
+    }
+
+    #[test]
+    fn given_two_users_when_the_same_body_is_addressed_then_should_produce_distinct_ids() {
+        let owner = |user: &str, application: &str| {
+            MemoryScope::builder()
+                .agent("agent".parse().expect("valid agent"))
+                .user(user.to_owned())
+                .app(application.to_owned())
+                .build()
+        };
+        let alice = MemoryId::content(&owner("alice", "console"), MemoryKind::Fact, b"x");
+        let bob = MemoryId::content(&owner("bob", "console"), MemoryKind::Fact, b"x");
+        let support = MemoryId::content(&owner("alice", "support"), MemoryKind::Fact, b"x");
+        assert_ne!(alice, bob, "the user is part of the owner");
+        assert_ne!(alice, support, "the application is part of the owner");
+        // The separators keep segment boundaries: moving bytes between the user
+        // and the application must not collide.
+        let shifted = MemoryId::content(&owner("alicecon", "sole"), MemoryKind::Fact, b"x");
+        assert_ne!(
+            owner("alicecon", "sole").user,
+            owner("alice", "console").user
+        );
+        assert_ne!(alice, shifted);
     }
 
     #[tokio::test]
@@ -3279,20 +3860,20 @@ mod tests {
         let second = Memory::remember(&memory, &scope, b"the dog ran".to_vec())
             .await
             .expect("remember second");
-        // With no feedback, recall returns creation order (first, then second).
+        // With no feedback, the newest item is first.
         let before = Memory::recall(&memory, &scope, &MemoryQuery::builder().build())
             .await
             .expect("recall before feedback");
-        assert_eq!(before[0].id, first);
+        assert_eq!(before[0].id, second);
 
-        // Promote the second item, then it ranks ahead.
-        Memory::improve(&memory, &scope, Feedback::new(second, 5.0))
+        // Promote the older item, then it ranks ahead.
+        Memory::improve(&memory, &scope, Feedback::new(first, 5.0))
             .await
             .expect("improve");
         let after = Memory::recall(&memory, &scope, &MemoryQuery::builder().build())
             .await
             .expect("recall after feedback");
-        assert_eq!(after[0].id, second, "the promoted item ranks first");
+        assert_eq!(after[0].id, first, "the promoted item ranks first");
         assert_eq!(after[0].score, Some(5.0));
     }
 
@@ -3334,21 +3915,21 @@ mod tests {
 
     #[test]
     fn given_a_merge_patch_when_applied_then_should_overwrite_add_and_remove_fields() {
-        let current = br#"{"tier":"pro","seats":3,"beta":true}"#;
-        let patch = br#"{"tier":"enterprise","region":"eu","beta":null}"#;
+        let current = br#"{"log_level":"info","replicas":3,"beta":true}"#;
+        let patch = br#"{"log_level":"debug","region":"eu","beta":null}"#;
         let merged = merge_named(Some(current), patch).expect("merges");
         let value: serde_json::Value = serde_json::from_slice(&merged).expect("json");
-        assert_eq!(value["tier"], "enterprise"); // overwritten
-        assert_eq!(value["seats"], 3); // untouched
+        assert_eq!(value["log_level"], "debug"); // overwritten
+        assert_eq!(value["replicas"], 3); // untouched
         assert_eq!(value["region"], "eu"); // added
         assert!(value.get("beta").is_none()); // null removes
     }
 
     #[test]
     fn given_no_current_value_when_merge_patched_then_should_start_from_the_patch() {
-        let merged = merge_named(None, br#"{"plan":"enterprise"}"#).expect("merges");
+        let merged = merge_named(None, br#"{"log_level":"debug"}"#).expect("merges");
         let value: serde_json::Value = serde_json::from_slice(&merged).expect("json");
-        assert_eq!(value["plan"], "enterprise");
+        assert_eq!(value["log_level"], "debug");
     }
 
     #[tokio::test]
@@ -3367,5 +3948,349 @@ mod tests {
             .await
             .expect("recall should succeed");
         assert!(all.is_empty());
+    }
+    #[cfg(feature = "kv")]
+    fn scoped_kv_entry(
+        id: u128,
+        conversation: ConversationId,
+        user: &str,
+        app: &str,
+    ) -> laser_wire::kv::KvEntry {
+        laser_wire::kv::KvEntry {
+            key: Ulid::from(id).to_string().into_bytes(),
+            value: format!("item-{id}").into_bytes(),
+            expires_at_micros: None,
+            version: 1,
+            scope: Some(Box::new(laser_wire::kv::MemoryRowScope {
+                kind: Some("fact".to_owned()),
+                user: Some(user.to_owned()),
+                app: Some(app.to_owned()),
+                conversation: Some(conversation.to_string()),
+                ..Default::default()
+            })),
+            source: None,
+        }
+    }
+
+    #[cfg(feature = "kv")]
+    #[tokio::test]
+    async fn given_paged_memory_scopes_when_recalled_without_a_conversation_then_should_keep_only_newest_matching_items()
+     {
+        let first = ConversationId::new();
+        let second = ConversationId::new();
+        let scope = MemoryScope::builder()
+            .user("reader".to_owned())
+            .app("diagnostics".to_owned())
+            .build();
+        let query = MemoryQuery::builder().limit(2).build();
+        let mut pages = std::collections::VecDeque::from([
+            laser_wire::kv::KvPage {
+                entries: vec![
+                    scoped_kv_entry(1, first, "reader", "diagnostics"),
+                    scoped_kv_entry(2, first, "other", "diagnostics"),
+                ],
+                cursor: Some(vec![2]),
+            },
+            laser_wire::kv::KvPage {
+                entries: vec![
+                    scoped_kv_entry(3, second, "reader", "other"),
+                    scoped_kv_entry(4, second, "reader", "diagnostics"),
+                    scoped_kv_entry(5, first, "reader", "diagnostics"),
+                ],
+                cursor: None,
+            },
+        ]);
+        let mut requested = Vec::new();
+        let items = recall_kv_pages(&scope, &query, |cursor| {
+            requested.push(cursor);
+            std::future::ready(Ok(pages.pop_front().expect("next page")))
+        })
+        .await
+        .expect("recall");
+        assert_eq!(requested, [None, Some(vec![2])]);
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.id.to_string())
+                .collect::<Vec<_>>(),
+            [Ulid::from(5u128).to_string(), Ulid::from(4u128).to_string()]
+        );
+        assert_eq!(items[0].provenance.conversation_id, first);
+        assert_eq!(items[1].provenance.conversation_id, second);
+    }
+
+    #[cfg(feature = "kv")]
+    #[tokio::test]
+    async fn given_a_repeating_memory_scan_cursor_when_recalled_then_should_refuse_to_loop() {
+        let scope = MemoryScope::default();
+        let query = MemoryQuery::builder().build();
+        let result = recall_kv_pages(&scope, &query, |_| {
+            std::future::ready(Ok(laser_wire::kv::KvPage {
+                entries: Vec::new(),
+                cursor: Some(vec![1]),
+            }))
+        })
+        .await;
+        assert!(matches!(result, Err(LaserError::Protocol(_))));
+    }
+
+    #[test]
+    fn given_folded_user_and_application_scopes_when_recalled_then_should_keep_the_newest_matching_records()
+     {
+        let conversation = ConversationId::new();
+        let mut projection = Projection::default();
+        for (id, user, app) in [
+            (1u128, "reader", "diagnostics"),
+            (2, "other", "diagnostics"),
+            (3, "reader", "other"),
+            (4, "reader", "diagnostics"),
+        ] {
+            let item = MemoryLogEntry::Item {
+                id: MemoryId(Ulid::from(id)),
+                kind: MemoryKind::Fact,
+                body: format!("item-{id}").into_bytes(),
+            };
+            projection.absorb_scoped(
+                &item.encode().expect("encode"),
+                Provenance::builder().conversation_id(conversation).build(),
+                StoredMemoryScope {
+                    user: Some(user.to_owned()),
+                    app: Some(app.to_owned()),
+                },
+            );
+        }
+        let scope = MemoryScope::builder()
+            .conversation(conversation)
+            .user("reader".to_owned())
+            .app("diagnostics".to_owned())
+            .build();
+        let items = folded_memory_items(
+            &projection,
+            &scope,
+            &MemoryQuery::builder().limit(1).build(),
+        );
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].payload, b"item-4");
+    }
+
+    fn projection_with_feedback_on_the_older_item() -> (Projection, MemoryId, MemoryId) {
+        let conversation = ConversationId::new();
+        let prov = || Provenance::builder().conversation_id(conversation).build();
+        let mut projection = Projection::default();
+        let older = MemoryId::new();
+        let newer = MemoryId::new();
+        projection.absorb(&item_entry(older, b"older"), prov());
+        projection.absorb(&item_entry(newer, b"newer"), prov());
+        let feedback = MemoryLogEntry::Feedback {
+            target: older,
+            weight: 3.0,
+        }
+        .encode()
+        .expect("a feedback entry encodes");
+        projection.absorb(&feedback, prov());
+        (projection, older, newer)
+    }
+
+    #[test]
+    fn given_feedback_when_folded_recall_is_recent_then_should_keep_recency_order() {
+        let (projection, older, newer) = projection_with_feedback_on_the_older_item();
+        let items = folded_memory_items(
+            &projection,
+            &MemoryScope::default(),
+            &MemoryQuery::builder()
+                .strategy(RecallStrategy::Recent)
+                .build(),
+        );
+        assert_eq!(
+            items.iter().map(|item| item.id).collect::<Vec<_>>(),
+            [newer, older]
+        );
+        assert!(items.iter().all(|item| item.score.is_none()));
+        assert!(items.iter().all(|item| item.signals.is_empty()));
+    }
+
+    #[test]
+    fn given_feedback_when_folded_recall_ranks_then_should_label_the_signal_auto() {
+        let (projection, older, _) = projection_with_feedback_on_the_older_item();
+        let items = folded_memory_items(
+            &projection,
+            &MemoryScope::default(),
+            &MemoryQuery::builder()
+                .strategy(RecallStrategy::Semantic)
+                .build(),
+        );
+        assert_eq!(items[0].id, older, "feedback promotes outside Recent");
+        assert_eq!(
+            items[0].signals,
+            [RecallSignal {
+                strategy: RecallStrategy::Auto,
+                rank: 0,
+                score: Some(3.0),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn given_feedback_when_vector_recall_is_recent_then_should_keep_recency_order() {
+        let memory = VectorMemory::new(WordEmbedder);
+        let scope = MemoryScope::default();
+        let older = Memory::remember(&memory, &scope, b"cat".to_vec())
+            .await
+            .expect("remember older");
+        let newer = Memory::remember(&memory, &scope, b"dog".to_vec())
+            .await
+            .expect("remember newer");
+        Memory::improve(&memory, &scope, Feedback::new(older, 5.0))
+            .await
+            .expect("improve");
+        let items = Memory::recall(
+            &memory,
+            &scope,
+            &MemoryQuery::builder()
+                .strategy(RecallStrategy::Recent)
+                .build(),
+        )
+        .await
+        .expect("recent recall");
+        assert_eq!(
+            items.iter().map(|item| item.id).collect::<Vec<_>>(),
+            [newer, older]
+        );
+        assert!(items.iter().all(|item| item.signals.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn given_a_builtin_memory_when_consolidated_then_should_append_a_durable_summary_kind() {
+        let memory = MemoryHandle::vector(WordEmbedder);
+        let conversation = ConversationId::new();
+        memory
+            .remember(b"cpu pressure".to_vec())
+            .scope(conversation)
+            .kind(MemoryKind::Message)
+            .send()
+            .await
+            .expect("message");
+        let scope = MemoryScope::builder().conversation(conversation).build();
+        let consolidator = DefaultConsolidator::new(&memory, 100).with_summarizer(StubSummarizer);
+        Consolidator::consolidate(&consolidator, &scope)
+            .await
+            .expect("consolidate");
+        let MemoryHandle::Vector(store) = &memory else {
+            panic!("vector")
+        };
+        let stored = store.items.lock().await;
+        let summary = stored
+            .iter()
+            .find(|entry| entry.item.kind == MemoryKind::Summary)
+            .expect("summary kind");
+        assert_eq!(summary.scope.lifetime, Lifetime::Durable);
+        assert_eq!(summary.item.payload, b"summary of 1");
+    }
+
+    #[tokio::test]
+    async fn given_recent_strategy_and_semantic_text_when_recalled_then_should_return_write_recency_without_embedding()
+     {
+        struct RecentEmbedder(std::sync::atomic::AtomicUsize);
+        impl Embedder for RecentEmbedder {
+            async fn embed(&self, _text: &str) -> Result<Vec<f32>, LaserError> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(vec![1.0])
+            }
+        }
+        let memory = VectorMemory::new(RecentEmbedder(std::sync::atomic::AtomicUsize::new(0)));
+        let scope = MemoryScope::builder().stream("one".to_owned()).build();
+        Memory::remember(&memory, &scope, b"old".to_vec())
+            .await
+            .expect("old");
+        Memory::remember(&memory, &scope, b"new".to_vec())
+            .await
+            .expect("new");
+        Memory::remember(
+            &memory,
+            &MemoryScope::builder().stream("two".to_owned()).build(),
+            b"another stream".to_vec(),
+        )
+        .await
+        .expect("other");
+        let items = Memory::recall(
+            &memory,
+            &scope,
+            &MemoryQuery::builder()
+                .limit(1)
+                .semantic("ignored".to_owned())
+                .strategy(RecallStrategy::Recent)
+                .build(),
+        )
+        .await
+        .expect("recent");
+        assert_eq!(items[0].payload, b"new");
+        assert_eq!(
+            memory.embedder.0.load(std::sync::atomic::Ordering::SeqCst),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn given_hybrid_memory_signals_when_ranked_then_should_report_additive_scores_and_each_signal_rank()
+     {
+        let memory = VectorMemory::new(WordEmbedder);
+        let scope = MemoryScope::default();
+        let first = Memory::remember(&memory, &scope, b"auth".to_vec())
+            .await
+            .expect("first");
+        let second = Memory::remember(&memory, &scope, b"auth latency".to_vec())
+            .await
+            .expect("second");
+        Memory::improve(&memory, &scope, Feedback::new(second, 1.5))
+            .await
+            .expect("feedback");
+        let items = Memory::recall(
+            &memory,
+            &scope,
+            &MemoryQuery::builder()
+                .semantic("auth".to_owned())
+                .strategy(RecallStrategy::Hybrid)
+                .build(),
+        )
+        .await
+        .expect("hybrid");
+        assert_eq!(items[0].id, second);
+        assert_eq!(items[1].id, first);
+        for item in &items {
+            assert_eq!(
+                item.score,
+                Some(
+                    item.signals
+                        .iter()
+                        .map(|signal| signal.score.unwrap_or(0.0))
+                        .sum()
+                )
+            );
+            assert!(
+                item.signals
+                    .iter()
+                    .any(|signal| signal.strategy == RecallStrategy::Semantic)
+            );
+            assert!(
+                item.signals
+                    .iter()
+                    .any(|signal| signal.strategy == RecallStrategy::Keyword)
+            );
+        }
+        let semantic = items[1]
+            .signals
+            .iter()
+            .find(|signal| signal.strategy == RecallStrategy::Semantic)
+            .expect("semantic");
+        assert_eq!(semantic.rank, 0);
+        assert_eq!(
+            items[0]
+                .signals
+                .iter()
+                .find(|signal| signal.strategy == RecallStrategy::Auto)
+                .expect("feedback")
+                .rank,
+            0
+        );
     }
 }

@@ -1,6 +1,6 @@
 use laser_examples::{
-    PARTITIONS, fresh_run, init_tracing, laser, managed_feature_ready, phase, start_projector,
-    stream_for,
+    PARTITIONS, ensure_view, fresh_run, index_for, init_tracing, laser, managed_feature_ready,
+    phase, stream_for,
 };
 use laser_sdk::prelude::full::*;
 use laser_sdk::query::WINDOW_START;
@@ -17,16 +17,16 @@ use tracing::info;
 //
 //   - HOT PATH    a consumer-group reader tails the raw log live while the
 //                 producer streams, folding a rolling ops ticker (events
-//                 seen, checkouts) with tick-to-read latency in mind.
+//                 seen, errors) with tick-to-read latency in mind.
 //   - ANALYTICS   LaserData Cloud materializes a queryable index and answers the
-//                 aggregates a dashboard needs (funnel, slowest routes,
+//                 aggregates a dashboard needs (mix, slowest routes,
 //                 time windows).
 //   - EXPORT      an independent reader tails the same log with a `Cursor`
 //                 plus `StateStore` checkpoint, resuming exactly where it
 //                 stopped after a restart.
 //   - SCHEMAS     on a LaserData Cloud, a registered JSON Schema guards the
 //                 index against malformed events (the binary schema-first
-//                 path lives in the order-book example's Avro tape).
+//                 path lives in the fleet-tape example's Avro tape).
 
 const TOPIC: &str = "clickstream";
 const CHECKPOINT_KEY: &str = "clickstream-export-cursor";
@@ -34,13 +34,12 @@ const CHECKPOINT_KEY: &str = "clickstream-export-cursor";
 // The validated ingest (managed deployment): events on this topic stamp a
 // registered JSON Schema's id, so a malformed payload never materializes.
 const GUARDED_TOPIC: &str = "clickstream_guarded";
-const GUARDED_PROJECTION: &str = "clickstream_guarded.v1";
 const EVENT_JSON_SCHEMA: &str = r#"{
     "type":"object",
     "required":["user_id","message_type","route","latency_ms","ts"],
     "properties":{
         "user_id":{"type":"string"},
-        "message_type":{"type":"string","enum":["page_view","add_to_cart","checkout"]},
+        "message_type":{"type":"string","enum":["request","retry","error"]},
         "route":{"type":"string"},
         "latency_ms":{"type":"integer","minimum":0},
         "ts":{"type":"integer","minimum":0}
@@ -56,19 +55,19 @@ const TS: &str = "ts"; // reserved field (epoch micros), drives `query.time_rang
 const COLUMNS: &[&str] = &[USER_ID, MESSAGE_TYPE, ROUTE, LATENCY_MS, TS];
 const COUNT_RESULT: &str = "count";
 
-// A whole session of traffic across many visitors, generated deterministically.
+// A whole session of traffic across many clients, generated deterministically.
 const VISITORS: &[&str] = &[
     "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan", "judy", "mallory",
     "oscar",
 ];
 const ROUTES: &[&str] = &[
-    "/home",
-    "/product/42",
-    "/product/7",
-    "/search",
-    "/cart",
-    "/checkout",
-    "/pricing",
+    "/healthz",
+    "/api/v1/hosts/42",
+    "/api/v1/jobs/7",
+    "/api/v1/metrics",
+    "/api/v1/hosts",
+    "/api/v1/jobs",
+    "/login",
     "/docs",
 ];
 
@@ -87,18 +86,18 @@ const LIVE_TIMEOUT: Duration = Duration::from_secs(15);
 const LIVE_GROUP: &str = "event-analytics-live";
 const LIVE_SNAPSHOT_EVERY: usize = 1_000;
 
-// What the visitor did. An enum with `strum::Display` + serde rename, so the
+// What the request did. An enum with `strum::Display` + serde rename, so the
 // indexed value and the JSON body can never disagree.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Display)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 enum EventType {
-    PageView,
-    AddToCart,
-    Checkout,
+    Request,
+    Retry,
+    Error,
 }
 
-// One clickstream event: who, what, where, how slow, and when.
+// One request-log event: who, what, where, how slow, and when.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Event {
     user_id: String,
@@ -122,12 +121,13 @@ async fn main() -> Result<(), LaserError> {
 
         // On LaserData Cloud, register before publishing so no event is missed.
         phase("hot path: a live reader tails the stream while the producer runs");
-        let projector = if query_available {
-            Some(start_projector(&laser, TOPIC, ContentType::Json, COLUMNS).await?)
+        // The index carries this run's token, so a rerun or another language's
+        // example on the same deployment never shares its rows.
+        if query_available {
+            ensure_view(&laser, TOPIC, &index_for(TOPIC), ContentType::Json, COLUMNS).await?;
         } else {
             managed_feature_ready(false, "projection-backed analytics", "event-analytics");
-            None
-        };
+        }
         let publisher = {
             let laser = laser.clone();
             let events = events.clone();
@@ -159,9 +159,6 @@ async fn main() -> Result<(), LaserError> {
             info!("writer schemas need Laser Stack or LaserData Cloud, skipping validated ingest");
         }
 
-        if let Some(projector) = projector {
-            projector.shutdown().await;
-        }
         Ok(())
     })
     .await
@@ -186,19 +183,19 @@ impl Rng {
     }
 }
 
-// A deterministic session: many visitors browsing, with page views the common case
-// and checkouts the rare one, spaced a few seconds apart from a fixed base.
+// A deterministic session: many clients calling the API, with plain requests the common case
+// and errors the rare one, spaced a few seconds apart from a fixed base.
 fn clickstream() -> Vec<Event> {
     let mut rng = Rng(0x1234_5678_9abc_def0);
     let mut ts = BASE_US;
     (0..events_total())
         .map(|_| {
             let user_id = VISITORS[rng.below(VISITORS.len() as u64) as usize].to_owned();
-            // Weight the funnel: ~70% page views, ~22% add-to-cart, ~8% checkout.
+            // Weight the mix: ~70% requests, ~22% retries, ~8% errors.
             let message_type = match rng.below(100) {
-                0..=69 => EventType::PageView,
-                70..=91 => EventType::AddToCart,
-                _ => EventType::Checkout,
+                0..=69 => EventType::Request,
+                70..=91 => EventType::Retry,
+                _ => EventType::Error,
             };
             let route = ROUTES[rng.below(ROUTES.len() as u64) as usize].to_owned();
             let latency_ms = 30 + rng.below(600) as u32;
@@ -275,7 +272,7 @@ async fn live_monitor(laser: &Laser, expected: usize) -> Result<(), LaserError> 
         .await?;
 
     let mut seen = 0usize;
-    let mut checkouts = 0usize;
+    let mut errors = 0usize;
     while seen < expected {
         let received = match tokio::time::timeout(LIVE_TIMEOUT, consumer.next()).await {
             Ok(Some(received)) => received?,
@@ -294,13 +291,13 @@ async fn live_monitor(laser: &Laser, expected: usize) -> Result<(), LaserError> 
             }
         };
         if let Ok(event) = received.json::<Event>()
-            && matches!(event.message_type, EventType::Checkout)
+            && matches!(event.message_type, EventType::Error)
         {
-            checkouts += 1;
+            errors += 1;
         }
         seen += 1;
         if seen.is_multiple_of(LIVE_SNAPSHOT_EVERY) || seen == expected {
-            info!("live ticker: {seen}/{expected} events, {checkouts} checkouts");
+            info!("live ticker: {seen}/{expected} events, {errors} errors");
         }
     }
     consumer.shutdown().await?;
@@ -310,6 +307,7 @@ async fn live_monitor(laser: &Laser, expected: usize) -> Result<(), LaserError> 
 // Poll until the projector has indexed every event, tolerant of a not-yet-created
 // index while a remote LaserData Cloud applies the projection.
 async fn wait_for_projection(laser: &Laser, expected: usize) -> Result<(), LaserError> {
+    let index = index_for(TOPIC);
     let deadline = Instant::now() + PROJECTOR_TIMEOUT;
     // Await-then-query where the deployment publishes the change feed (LaserData
     // Cloud with a notifying binding): each tick drains the feed and re-runs the
@@ -319,7 +317,7 @@ async fn wait_for_projection(laser: &Laser, expected: usize) -> Result<(), Laser
         .capabilities()
         .await
         .watch
-        .then(|| laser.watch().index(TOPIC).records())
+        .then(|| laser.watch().index(&index).records())
         .transpose()?;
     let mut last = usize::MAX;
     loop {
@@ -329,7 +327,7 @@ async fn wait_for_projection(laser: &Laser, expected: usize) -> Result<(), Laser
         };
         if advanced || last == usize::MAX {
             let total = laser
-                .query(TOPIC)
+                .query(&index)
                 .with_total()
                 .fetch()
                 .await
@@ -355,9 +353,10 @@ async fn wait_for_projection(laser: &Laser, expected: usize) -> Result<(), Laser
 
 // The analytics read model: the aggregates a dashboard asks of a clickstream.
 async fn run_analytics(laser: &Laser) -> Result<(), LaserError> {
-    // Funnel: how many events of each kind, grouped.
+    let index = index_for(TOPIC);
+    // Mix: how many events of each kind, grouped.
     let by_kind = laser
-        .query(TOPIC)
+        .query(&index)
         .count()
         .group_by([MESSAGE_TYPE])
         .fetch()
@@ -375,7 +374,7 @@ async fn run_analytics(laser: &Laser) -> Result<(), LaserError> {
 
     // Slowest routes: order by latency, top 3.
     let slowest = laser
-        .query(TOPIC)
+        .query(&index)
         .order_desc(LATENCY_MS)
         .limit(3)
         .fetch()
@@ -391,18 +390,18 @@ async fn run_analytics(laser: &Laser) -> Result<(), LaserError> {
         info!("  {latency:>5}ms  {route}");
     }
 
-    // Checkouts only, via the reserved `message_type` field.
-    let checkouts = laser
-        .query(TOPIC)
-        .message_type(EventType::Checkout.to_string())
+    // Errors only, via the reserved `message_type` field.
+    let errors = laser
+        .query(&index)
+        .message_type(EventType::Error.to_string())
         .count()
         .fetch()
         .await?;
-    info!("checkouts: {}", scalar(&checkouts));
+    info!("errors: {}", scalar(&errors));
 
     // First 5 minutes of the session, via the reserved `ts` field and a time range.
     let first_window = laser
-        .query(TOPIC)
+        .query(&index)
         .time_range(BASE_US, BASE_US + 5 * ONE_MINUTE_US)
         .count()
         .fetch()
@@ -412,7 +411,7 @@ async fn run_analytics(laser: &Laser) -> Result<(), LaserError> {
     // Per-minute event counts in ONE query via a tumbling window. Each result
     // row carries the bucket's lower edge under `window_start` plus the count.
     let per_minute = laser
-        .query(TOPIC)
+        .query(&index)
         .count()
         .window(TS, ONE_MINUTE_US)
         .fetch()
@@ -431,7 +430,7 @@ async fn run_analytics(laser: &Laser) -> Result<(), LaserError> {
     // Two metrics in one pass: mean latency and distinct routes per event kind.
     // `avg`/`count_distinct` are universal across backends (no capability gate).
     let by_kind_metrics = laser
-        .query(TOPIC)
+        .query(&index)
         .avg(LATENCY_MS)
         .count_distinct(ROUTE)
         .group_by([MESSAGE_TYPE])
@@ -527,11 +526,13 @@ async fn run_guarded_ingest(laser: &Laser) -> Result<(), LaserError> {
     info!("LaserData Cloud allocated writer-schema id {schema_id} for the Event guard");
 
     laser.topic(GUARDED_TOPIC).ensure(PARTITIONS).await?;
+    let index = index_for(GUARDED_TOPIC);
+    let projection = format!("{index}.v1");
     laser
         .projections()
         .register(
-            Projection::builder(GUARDED_PROJECTION)
-                .name("clickstream_guarded")
+            Projection::builder(projection.clone())
+                .name(index.clone())
                 .version(1)
                 .content_type(ContentType::Json)
                 .fields(COLUMNS.iter().copied())
@@ -544,9 +545,9 @@ async fn run_guarded_ingest(laser: &Laser) -> Result<(), LaserError> {
         .apply(
             ProjectionBinding::builder()
                 .source(stream_for("event-analytics"), GUARDED_TOPIC)
-                .allow(GUARDED_PROJECTION)
-                .default_projection(GUARDED_PROJECTION)
-                .index(GUARDED_TOPIC)
+                .allow(projection.clone())
+                .default_projection(projection)
+                .index(index.clone())
                 .build(),
         )
         .await?;
@@ -555,8 +556,8 @@ async fn run_guarded_ingest(laser: &Laser) -> Result<(), LaserError> {
     // Well-formed: passes the schema, materializes.
     let valid = Event {
         user_id: "alice".to_owned(),
-        message_type: EventType::Checkout,
-        route: "/checkout".to_owned(),
+        message_type: EventType::Error,
+        route: "/api/v1/jobs".to_owned(),
         latency_ms: 120,
         ts: BASE_US,
     };
@@ -572,7 +573,7 @@ async fn run_guarded_ingest(laser: &Laser) -> Result<(), LaserError> {
     guarded
         .publish()
         .raw_bytes(
-            br#"{"user_id":"mallory","message_type":"checkout","route":"/checkout","latency_ms":"fast","ts":1}"#.to_vec(),
+            br#"{"user_id":"mallory","message_type":"error","route":"/api/v1/jobs","latency_ms":"fast","ts":1}"#.to_vec(),
             ContentType::Json,
         )
         .schema_id(schema_id)
@@ -582,7 +583,7 @@ async fn run_guarded_ingest(laser: &Laser) -> Result<(), LaserError> {
     let deadline = Instant::now() + PROJECTOR_TIMEOUT;
     loop {
         let total = laser
-            .query(GUARDED_TOPIC)
+            .query(&index)
             .with_total()
             .fetch()
             .await
@@ -593,7 +594,7 @@ async fn run_guarded_ingest(laser: &Laser) -> Result<(), LaserError> {
             // malformed event before pinning the count.
             tokio::time::sleep(Duration::from_secs(1)).await;
             let settled = laser
-                .query(GUARDED_TOPIC)
+                .query(&index)
                 .with_total()
                 .fetch()
                 .await
@@ -605,7 +606,7 @@ async fn run_guarded_ingest(laser: &Laser) -> Result<(), LaserError> {
                 ));
             }
             info!(
-                "guarded index holds {settled} row: the valid checkout landed, the malformed event was rejected by the JSON Schema and never materialized"
+                "guarded index holds {settled} row: the valid error event landed, the malformed event was rejected by the JSON Schema and never materialized"
             );
             return Ok(());
         }

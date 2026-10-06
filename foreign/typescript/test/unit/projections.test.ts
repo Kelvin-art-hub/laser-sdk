@@ -55,8 +55,8 @@ function fakePublishControl(): {
 }
 
 const ROW_PROJECTION: Projection = {
-  id: "orders.v1" as Projection["id"],
-  name: "orders",
+  id: "reading.v1" as Projection["id"],
+  name: "readings",
   version: 1,
   kind: { kind: "row" },
   contentType: ContentType.Json,
@@ -66,14 +66,14 @@ const ROW_PROJECTION: Projection = {
 
 const GRAPH_PROJECTION: Projection = {
   ...ROW_PROJECTION,
-  id: "orders.graph" as Projection["id"],
+  id: "reading.graph" as Projection["id"],
   kind: { kind: "graph" },
   entitySchema: { nodes: [], edges: [] }
 }
 
 void test("given_a_row_projection_when_register_is_called_then_should_publish_the_control_command", async () => {
   const control = fakePublishControl()
-  const projections = new Projections(
+  const projections = Projections.create(
     { sendManaged: () => Promise.reject(new Error("unused")) },
     () => Promise.resolve(CAPS),
     control.publish
@@ -84,7 +84,7 @@ void test("given_a_row_projection_when_register_is_called_then_should_publish_th
 
 void test("given_a_graph_projection_when_register_is_called_then_should_reject_before_publishing", async () => {
   const control = fakePublishControl()
-  const projections = new Projections(
+  const projections = Projections.create(
     { sendManaged: () => Promise.reject(new Error("unused")) },
     () => Promise.resolve(CAPS),
     control.publish
@@ -95,7 +95,7 @@ void test("given_a_graph_projection_when_register_is_called_then_should_reject_b
 
 void test("given_a_non_graph_projection_when_register_graph_is_called_then_should_reject_before_publishing", async () => {
   const control = fakePublishControl()
-  const projections = new Projections(
+  const projections = Projections.create(
     { sendManaged: () => Promise.reject(new Error("unused")) },
     () => Promise.resolve(CAPS),
     control.publish
@@ -106,7 +106,7 @@ void test("given_a_non_graph_projection_when_register_graph_is_called_then_shoul
 
 void test("given_a_graph_projection_when_register_graph_is_called_then_should_publish_the_control_command", async () => {
   const control = fakePublishControl()
-  const projections = new Projections(
+  const projections = Projections.create(
     { sendManaged: () => Promise.reject(new Error("unused")) },
     () => Promise.resolve(CAPS),
     control.publish
@@ -117,16 +117,16 @@ void test("given_a_graph_projection_when_register_graph_is_called_then_should_pu
 
 void test("given_an_id_when_drop_and_drop_graph_are_called_then_should_publish_the_right_commands", async () => {
   const control = fakePublishControl()
-  const projections = new Projections(
+  const projections = Projections.create(
     { sendManaged: () => Promise.reject(new Error("unused")) },
     () => Promise.resolve(CAPS),
     control.publish
   )
-  await projections.drop("orders.v1")
-  await projections.dropGraph("orders.graph")
+  await projections.drop("reading.v1")
+  await projections.dropGraph("reading.graph")
   assert.deepEqual(control.calls, [
-    { kind: "dropProjection", id: "orders.v1" },
-    { kind: "dropGraph", id: "orders.graph" }
+    { kind: "dropProjection", id: "reading.v1" },
+    { kind: "dropGraph", id: "reading.graph" }
   ])
 })
 
@@ -134,18 +134,18 @@ void test("given_a_projection_outcome_when_get_is_called_then_should_return_it",
   const transport = fakeTransport([
     okFrame({ kind: "projection", projection: { projection: ROW_PROJECTION, bindings: [] } })
   ])
-  const projections = new Projections(
+  const projections = Projections.create(
     transport,
     () => Promise.resolve(CAPS),
     () => Promise.resolve()
   )
-  const info = await projections.get("orders.v1")
+  const info = await projections.get("reading.v1")
   assert.deepEqual(info?.projection, ROW_PROJECTION)
 })
 
 void test("given_an_absent_projection_outcome_when_get_is_called_then_should_return_undefined", async () => {
   const transport = fakeTransport([okFrame({ kind: "projection" })])
-  const projections = new Projections(
+  const projections = Projections.create(
     transport,
     () => Promise.resolve(CAPS),
     () => Promise.resolve()
@@ -157,16 +157,16 @@ void test("given_filters_when_list_is_fetched_then_should_send_them_and_return_t
   const transport = fakeTransport([
     okFrame({ kind: "projections", projections: [{ projection: ROW_PROJECTION, bindings: [] }] })
   ])
-  const projections = new Projections(
+  const projections = Projections.create(
     transport,
     () => Promise.resolve(CAPS),
     () => Promise.resolve()
   )
   const list = await projections
     .list()
-    .forTopic("orders")
+    .forTopic("readings")
     .nameContains("ord")
-    .idPrefix("orders")
+    .idPrefix("readings")
     .search("ord")
     .fetch()
   assert.equal(list.length, 1)
@@ -175,12 +175,12 @@ void test("given_filters_when_list_is_fetched_then_should_send_them_and_return_t
 
 void test("given_open_capabilities_when_get_is_called_then_should_reject_before_the_transport", async () => {
   const transport = fakeTransport([])
-  const projections = new Projections(
+  const projections = Projections.create(
     transport,
     () => Promise.resolve(OPEN_CAPABILITIES),
     () => Promise.resolve()
   )
-  await assert.rejects(() => projections.get("orders.v1"), UnsupportedError)
+  await assert.rejects(() => projections.get("reading.v1"), UnsupportedError)
   assert.equal(transport.calls.length, 0)
 })
 
@@ -188,7 +188,7 @@ void test("given_an_err_reply_when_get_fails_then_should_wrap_it_as_a_query_exec
   const transport = fakeTransport([
     replyFrame({ kind: "err", error: { kind: "index_not_found", message: "no such projection" } })
   ])
-  const projections = new Projections(
+  const projections = Projections.create(
     transport,
     () => Promise.resolve(CAPS),
     () => Promise.resolve()
@@ -198,35 +198,35 @@ void test("given_an_err_reply_when_get_fails_then_should_wrap_it_as_a_query_exec
 
 void test("given_a_binding_when_applied_and_removed_then_should_publish_the_right_commands", async () => {
   const control = fakePublishControl()
-  const bindings = new Bindings(control.publish)
+  const bindings = Bindings.create(control.publish)
   const binding = {
-    source: { stream: "orders", topic: "events" },
+    source: { stream: "readings", topic: "events" },
     allowedProjections: [ROW_PROJECTION.id],
     index: "events",
     notify: false
   }
   await bindings.apply(binding)
-  await bindings.remove({ stream: "orders", topic: "events" }, "orders.v1")
+  await bindings.remove({ stream: "readings", topic: "events" }, "reading.v1")
   assert.deepEqual(control.calls, [
     { kind: "applyBinding", binding },
     {
       kind: "removeBinding",
-      source: { stream: "orders", topic: "events" },
-      projectionRef: "orders.v1"
+      source: { stream: "readings", topic: "events" },
+      projectionRef: "reading.v1"
     }
   ])
 })
 
 void test("given_a_schema_source_when_registered_then_should_return_the_allocated_id", async () => {
   const transport = fakeTransport([okFrame({ kind: "schemaRegistered", id: 7 })])
-  const schemas = new Schemas(
+  const schemas = Schemas.create(
     transport,
     () => Promise.resolve(CAPS),
     () => Promise.resolve()
   )
   const id = await schemas
     .register({ kind: "jsonSchema", schema: "{}" })
-    .name("orders")
+    .name("readings")
     .version(1)
     .send()
   assert.equal(id, 7)
@@ -244,7 +244,7 @@ void test("given_a_schema_id_when_dropped_gotten_and_listed_then_should_use_the_
       schemas: [{ schema: { id: 7, source: { kind: "jsonSchema", schema: "{}" } }, dropped: false }]
     })
   ])
-  const schemas = new Schemas(transport, () => Promise.resolve(CAPS), control.publish)
+  const schemas = Schemas.create(transport, () => Promise.resolve(CAPS), control.publish)
   await schemas.drop(7)
   const info = await schemas.get(7)
   const list = await schemas.list()

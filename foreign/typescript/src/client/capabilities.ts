@@ -1,5 +1,6 @@
 import { UnsupportedError } from "./errors.js"
-import { Feature, opVersionsHasFeature } from "../wire/hello.js"
+import type { FilterCodec } from "../wire/filter.js"
+import { feature, filterAnnounceEvaluates, opVersionsHasFeature } from "../wire/hello.js"
 import type {
   BackendAnnounce,
   BackendDescriptor,
@@ -7,11 +8,12 @@ import type {
   FilterAnnounce,
   OpVersions
 } from "../wire/hello.js"
+import type { CheckpointReadConsistency } from "../wire/checkpoint.js"
 import type { BackendResourceId } from "../wire/ids.js"
 import type { Consistency } from "../wire/query.js"
 import type { WireTopology } from "../wire/topology.js"
 
-export interface QueryCapabilities {
+export interface QueryCaps {
   readonly available: boolean
   readonly consistency: Consistency
   readonly keyword: boolean
@@ -20,12 +22,12 @@ export interface QueryCapabilities {
   readonly executionStatus: boolean
 }
 
-export interface DestinationCapabilities {
+export interface DestinationCaps {
   readonly available: boolean
-  readonly checkpointVersion: number
+  readonly consistency: CheckpointReadConsistency
 }
 
-export interface KvCapabilities {
+export interface KvCaps {
   readonly available: boolean
   readonly cas: boolean
   readonly casFenced: boolean
@@ -37,7 +39,7 @@ export interface KvCapabilities {
 }
 
 /** Server-side consumer filters. */
-export interface FilterCapabilities {
+export interface FilterCaps {
   /** Filtered reads, fenced acknowledgments, previews, sample tests, and
    * validation, served by the streaming server itself. */
   readonly native: boolean
@@ -63,21 +65,18 @@ export type HelloOutcome = "unknown" | "answered" | "rejected" | "failed"
 
 export interface Capabilities {
   readonly managed: boolean
-  readonly query: QueryCapabilities
-  readonly destinations: DestinationCapabilities
-  readonly kv: KvCapabilities
+  readonly query: QueryCaps
+  readonly destinations: DestinationCaps
+  readonly kv: KvCaps
   readonly graph: boolean
   readonly forks: boolean
   readonly a2aGateway: boolean
   readonly agentWorkflow: boolean
   readonly watch: boolean
   readonly authz: boolean
-  readonly filters: FilterCapabilities
-  readonly sessions: boolean
-  readonly durableDedup: boolean
+  readonly filters: FilterCaps
   readonly versions?: OpVersions
   readonly backends: readonly BackendDescriptor[]
-  readonly topology?: WireTopology
   readonly hello: HelloOutcome
 }
 
@@ -107,7 +106,7 @@ export const OPEN_CAPABILITIES: Capabilities = Object.freeze({
     cancellation: false,
     executionStatus: false
   }),
-  destinations: Object.freeze({ available: false, checkpointVersion: 0 }),
+  destinations: Object.freeze({ available: false, consistency: "potentially_stale" }),
   kv: Object.freeze({ available: false, cas: false, casFenced: false, fencedLeases: false }),
   graph: false,
   forks: false,
@@ -116,87 +115,9 @@ export const OPEN_CAPABILITIES: Capabilities = Object.freeze({
   watch: false,
   authz: false,
   filters: Object.freeze({ native: false, catalog: false, groupPolicyReads: false }),
-  sessions: false,
-  durableDedup: false,
   backends: Object.freeze([]),
   hello: "unknown"
 })
-
-function managedBase(): Capabilities {
-  return {
-    ...OPEN_CAPABILITIES,
-    managed: true,
-    query: { ...OPEN_CAPABILITIES.query, available: true },
-    kv: { ...OPEN_CAPABILITIES.kv, available: true },
-    forks: true
-  }
-}
-
-export function managedCapabilitiesWithUnknownVersions(): Capabilities {
-  return managedBase()
-}
-
-export function managedCapabilitiesFrom(announce: BackendAnnounce): Capabilities {
-  const versions = announce.versions
-  const ready = announce.ready !== false
-  const consistency: Consistency = opVersionsHasFeature(versions, Feature.STRONG_CONSISTENCY)
-    ? "strong"
-    : opVersionsHasFeature(versions, Feature.READ_YOUR_WRITES)
-      ? "read_your_writes"
-      : "eventual"
-  const readyBackends = ready ? announce.backends.filter((backend) => backend.readiness.ready) : []
-  const queryCapabilities = readyBackends.flatMap((backend) => backend.query ?? [])
-  return {
-    ...(ready ? managedBase() : OPEN_CAPABILITIES),
-    query: {
-      available: ready && versions.query > 0,
-      consistency: ready ? consistency : "eventual",
-      keyword: ready && opVersionsHasFeature(versions, Feature.KEYWORD_SEARCH),
-      cursorPaging: queryCapabilities.some((query) => query.paging.includes("cursor")),
-      cancellation: queryCapabilities.some((query) => query.cancellation),
-      executionStatus: queryCapabilities.some((query) => query.executionStatus)
-    },
-    destinations: {
-      available:
-        ready &&
-        (versions.checkpoint ?? 0) > 0 &&
-        opVersionsHasFeature(versions, Feature.DESTINATIONS),
-      checkpointVersion: versions.checkpoint ?? 0
-    },
-    kv: {
-      available: ready && versions.kv > 0,
-      cas: ready && opVersionsHasFeature(versions, Feature.KV_CAS),
-      casFenced:
-        ready &&
-        (opVersionsHasFeature(versions, Feature.KV_CAS_FENCED) ||
-          opVersionsHasFeature(versions, Feature.KV_FENCED_LEASES)),
-      fencedLeases: ready && opVersionsHasFeature(versions, Feature.KV_FENCED_LEASES)
-    },
-    graph: ready && versions.graph > 0,
-    forks: ready && versions.fork > 0,
-    agentWorkflow: ready && opVersionsHasFeature(versions, Feature.AGENT_WORKFLOW),
-    watch: ready && opVersionsHasFeature(versions, Feature.WATCH),
-    authz: opVersionsHasFeature(versions, Feature.AUTHZ),
-    filters: {
-      native: opVersionsHasFeature(versions, Feature.CONSUMER_FILTERS),
-      catalog:
-        ready &&
-        (opVersionsHasFeature(versions, Feature.CONSUMER_FILTERS) ||
-          opVersionsHasFeature(versions, Feature.GROUP_POLICY_READS)) &&
-        (versions.filter ?? 0) > 0,
-      // Served by the streaming server itself, like the native reads: a server
-      // without a managed plane resolves every group as unbound.
-      groupPolicyReads: opVersionsHasFeature(versions, Feature.GROUP_POLICY_READS),
-      ...(opVersionsHasFeature(versions, Feature.CONSUMER_FILTERS) && announce.filters !== undefined
-        ? { evaluation: announce.filters }
-        : {})
-    },
-    versions,
-    backends: announce.backends,
-    ...(announce.topology !== undefined ? { topology: announce.topology } : {}),
-    hello: "answered"
-  }
-}
 
 const CONSISTENCY_RANK: Readonly<Record<Consistency, number>> = {
   eventual: 0,
@@ -204,63 +125,80 @@ const CONSISTENCY_RANK: Readonly<Record<Consistency, number>> = {
   strong: 2
 }
 
+// The announcement each answered set came from, so a merge onto the builder's
+// seed folds the announcement itself like Rust `merge_announcement`, and the
+// client reads the announced topology without it being a capability.
+const ANNOUNCEMENTS = new WeakMap<Capabilities, BackendAnnounce>()
+
+export function managedCapabilitiesFrom(announce: BackendAnnounce): Capabilities {
+  return mergeAnnouncement(OPEN_CAPABILITIES, announce)
+}
+
+/** The stream and topic names the deployment announced with `capabilities`,
+ * if it announced any. */
+export function advertisedTopology(capabilities: Capabilities): WireTopology | undefined {
+  return ANNOUNCEMENTS.get(capabilities)?.topology
+}
+
+/** Merges a probe result onto the builder's capability seed. The seed is the
+ * starting point, never a ceiling: an answered probe adds what the deployment
+ * serves, and a rejected or failed one only records its outcome. */
 export function mergeCapabilities(configured: Capabilities, announced: Capabilities): Capabilities {
-  const consistency =
-    CONSISTENCY_RANK[announced.query.consistency] > CONSISTENCY_RANK[configured.query.consistency]
-      ? announced.query.consistency
-      : configured.query.consistency
+  const announce = ANNOUNCEMENTS.get(announced)
+  if (announce !== undefined) return mergeAnnouncement(configured, announce)
   return {
-    managed: configured.managed || announced.managed,
-    query: {
-      available: configured.query.available || announced.query.available,
-      consistency,
-      keyword: configured.query.keyword || announced.query.keyword,
-      cursorPaging: configured.query.cursorPaging || announced.query.cursorPaging,
-      cancellation: configured.query.cancellation || announced.query.cancellation,
-      executionStatus: configured.query.executionStatus || announced.query.executionStatus
-    },
-    destinations: {
-      available: configured.destinations.available || announced.destinations.available,
-      checkpointVersion: Math.max(
-        configured.destinations.checkpointVersion,
-        announced.destinations.checkpointVersion
-      )
-    },
-    kv: {
-      available: configured.kv.available || announced.kv.available,
-      cas: configured.kv.cas || announced.kv.cas,
-      casFenced: configured.kv.casFenced || announced.kv.casFenced,
-      fencedLeases: configured.kv.fencedLeases || announced.kv.fencedLeases
-    },
-    graph: configured.graph || announced.graph,
-    forks: configured.forks || announced.forks,
-    a2aGateway: configured.a2aGateway || announced.a2aGateway,
-    agentWorkflow: configured.agentWorkflow || announced.agentWorkflow,
-    watch: configured.watch || announced.watch,
-    authz: configured.authz || announced.authz,
-    filters: {
-      native: configured.filters.native || announced.filters.native,
-      catalog: configured.filters.catalog || announced.filters.catalog,
-      groupPolicyReads: configured.filters.groupPolicyReads || announced.filters.groupPolicyReads,
-      ...((announced.filters.evaluation ?? configured.filters.evaluation) !== undefined
-        ? { evaluation: announced.filters.evaluation ?? configured.filters.evaluation }
-        : {})
-    },
-    sessions: configured.sessions || announced.sessions,
-    durableDedup: configured.durableDedup || announced.durableDedup,
-    ...(announced.versions !== undefined
-      ? { versions: announced.versions }
-      : configured.versions !== undefined
-        ? { versions: configured.versions }
-        : {}),
-    backends: announced.backends.length > 0 ? announced.backends : configured.backends,
-    ...(announced.topology !== undefined
-      ? { topology: announced.topology }
-      : configured.topology !== undefined
-        ? { topology: configured.topology }
-        : {}),
+    ...configured,
     hello: announced.hello === "unknown" ? configured.hello : announced.hello
   }
+}
+
+/** True when the connected infrastructure advertised nothing beyond the open
+ * SDK, field for field equal to `OPEN_CAPABILITIES`, like Rust
+ * `Capabilities::is_open_only`. */
+export function isOpenOnly(capabilities: Capabilities): boolean {
+  const open = OPEN_CAPABILITIES
+  const { query, destinations, kv, filters } = capabilities
+  return (
+    capabilities.managed === open.managed &&
+    query.available === open.query.available &&
+    query.consistency === open.query.consistency &&
+    query.keyword === open.query.keyword &&
+    query.cursorPaging === open.query.cursorPaging &&
+    query.cancellation === open.query.cancellation &&
+    query.executionStatus === open.query.executionStatus &&
+    destinations.available === open.destinations.available &&
+    destinations.consistency === open.destinations.consistency &&
+    kv.available === open.kv.available &&
+    kv.cas === open.kv.cas &&
+    kv.casFenced === open.kv.casFenced &&
+    kv.fencedLeases === open.kv.fencedLeases &&
+    capabilities.graph === open.graph &&
+    capabilities.forks === open.forks &&
+    capabilities.a2aGateway === open.a2aGateway &&
+    capabilities.agentWorkflow === open.agentWorkflow &&
+    capabilities.watch === open.watch &&
+    capabilities.authz === open.authz &&
+    filters.native === open.filters.native &&
+    filters.catalog === open.filters.catalog &&
+    filters.groupPolicyReads === open.filters.groupPolicyReads &&
+    filters.evaluation === undefined &&
+    capabilities.versions === undefined &&
+    capabilities.backends.length === 0
+  )
+}
+
+/** Whether the server evaluates a filter built for `evaluatorVersion` with
+ * `codec` exactly as this build does, like Rust `FilterCaps::evaluates`. A
+ * server that announced no evaluation contract accepts every filter. */
+export function filterCapsEvaluates(
+  filters: FilterCaps,
+  evaluatorVersion: number,
+  codec: FilterCodec
+): boolean {
+  return (
+    filters.evaluation === undefined ||
+    filterAnnounceEvaluates(filters.evaluation, evaluatorVersion, codec)
+  )
 }
 
 export function servesConsistency(capabilities: Capabilities, level: Consistency): boolean {
@@ -333,5 +271,91 @@ export function requireCapability(capabilities: Capabilities, surface: Capabilit
     throw new UnsupportedError(`${surface} is not served by this deployment`, {
       cause: { surface }
     })
+  }
+}
+
+function strongerConsistency(left: Consistency, right: Consistency): Consistency {
+  return CONSISTENCY_RANK[right] > CONSISTENCY_RANK[left] ? right : left
+}
+
+// Folds one hello announcement into `capabilities`, step for step like Rust
+// `merge_announcement` and `merge_features`. Only a ready announcement lights
+// up plane-served surfaces, and the query surface needs a ready backend that
+// announces query capabilities. Additive, so a surface the seed set survives.
+function mergeAnnouncement(capabilities: Capabilities, announce: BackendAnnounce): Capabilities {
+  const merged = foldAnnouncement(capabilities, announce)
+  ANNOUNCEMENTS.set(merged, announce)
+  return merged
+}
+
+function foldAnnouncement(capabilities: Capabilities, announce: BackendAnnounce): Capabilities {
+  const versions = announce.versions
+  const has = (bit: bigint): boolean => opVersionsHasFeature(versions, bit)
+  const native = capabilities.filters.native || has(feature.CONSUMER_FILTERS)
+  const groupPolicyReads = capabilities.filters.groupPolicyReads || has(feature.GROUP_POLICY_READS)
+  const evaluation = native ? announce.filters : capabilities.filters.evaluation
+  const answered: Capabilities = {
+    ...capabilities,
+    versions,
+    backends: announce.backends,
+    authz: capabilities.authz || has(feature.AUTHZ),
+    filters: {
+      native,
+      catalog: capabilities.filters.catalog,
+      groupPolicyReads,
+      ...(evaluation !== undefined ? { evaluation } : {})
+    },
+    hello: "answered"
+  }
+  if (announce.ready === false) return answered
+  const destinations =
+    capabilities.destinations.available ||
+    ((versions.checkpoint ?? 0) > 0 && has(feature.DESTINATIONS))
+  let consistency = capabilities.query.consistency
+  if (has(feature.STRONG_CONSISTENCY)) consistency = "strong"
+  else if (has(feature.READ_YOUR_WRITES))
+    consistency = strongerConsistency(consistency, "read_your_writes")
+  let query = {
+    ...capabilities.query,
+    keyword: capabilities.query.keyword || has(feature.KEYWORD_SEARCH)
+  }
+  for (const backend of announce.backends) {
+    const served = backend.readiness.ready ? backend.query : undefined
+    if (served === undefined) continue
+    query = {
+      ...query,
+      available: query.available || versions.query > 0,
+      cursorPaging: query.cursorPaging || served.paging.includes("cursor"),
+      cancellation: query.cancellation || served.cancellation,
+      executionStatus: query.executionStatus || served.executionStatus
+    }
+    if (served.consistency.includes("strong")) consistency = "strong"
+    else if (served.consistency.includes("read_your_writes"))
+      consistency = strongerConsistency(consistency, "read_your_writes")
+  }
+  const fencedLeases = capabilities.kv.fencedLeases || has(feature.KV_FENCED_LEASES)
+  return {
+    ...answered,
+    managed: true,
+    query: { ...query, consistency },
+    destinations: {
+      available: destinations,
+      consistency: destinations ? "linearizable" : capabilities.destinations.consistency
+    },
+    kv: {
+      available: capabilities.kv.available || versions.kv > 0,
+      cas: capabilities.kv.cas || has(feature.KV_CAS),
+      casFenced: capabilities.kv.casFenced || has(feature.KV_CAS_FENCED) || fencedLeases,
+      fencedLeases
+    },
+    graph: capabilities.graph || versions.graph > 0,
+    forks: capabilities.forks || versions.fork > 0,
+    agentWorkflow: capabilities.agentWorkflow || has(feature.AGENT_WORKFLOW),
+    watch: capabilities.watch || has(feature.WATCH),
+    filters: {
+      ...answered.filters,
+      catalog:
+        capabilities.filters.catalog || ((native || groupPolicyReads) && (versions.filter ?? 0) > 0)
+    }
   }
 }

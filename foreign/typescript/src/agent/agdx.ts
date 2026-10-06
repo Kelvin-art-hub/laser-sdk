@@ -1,12 +1,15 @@
+import { type BlobStore, checkIn } from "../blob.js"
 import { type BytesLike, ownedBytes } from "../client/bytes.js"
 import { CancelledError, InvalidError, RejectedError, TimeoutError } from "../client/errors.js"
-import type { IggyHeaderValue, LaserTransport, MessageWithHeaders } from "../iggy/apache-iggy.js"
-import { mintUlidValue, type UlidSource } from "../runtime/ulid.js"
+import type { LaserTransport, MessageWithHeaders } from "../iggy/apache-iggy.js"
+import type { HeaderValue } from "../stream/header-value.js"
+import type { UlidSource } from "../runtime/ulid.js"
 import { type KeyRegistry, type SigningKey } from "../signing.js"
 import { decodeAgentMessage } from "./reliable-consumer.js"
 import {
   type AgentId as SdkAgentId,
-  type ConversationId as SdkConversationId
+  type ConversationId as SdkConversationId,
+  MintUlid
 } from "../types/ids.js"
 import {
   AgentKind,
@@ -23,7 +26,6 @@ import {
   errorEnvelope,
   eventEnvelope,
   responseEnvelope,
-  parseAgentId,
   statusEnvelope,
   validateAgentEnvelope,
   withCause,
@@ -58,8 +60,6 @@ const REPLY_BATCH = 200
 const REPLY_POLL_INTERVAL_MS = 50
 const textDecoder = new TextDecoder("utf-8", { fatal: true })
 
-export type AgdxLogPosition = LogPosition
-
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted === true) {
@@ -78,10 +78,6 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-function wireAgentId(agent: SdkAgentId): WireAgentId {
-  return parseAgentId(agent.asString())
-}
-
 function u32FromLittleEndian(header: CanonicalHeader): number {
   if (header.bytes.byteLength !== 4) throw new InvalidError("AGDX u32 header must be 4 bytes")
   return new DataView(
@@ -91,7 +87,7 @@ function u32FromLittleEndian(header: CanonicalHeader): number {
   ).getUint32(0, true)
 }
 
-function iggyHeader(header: CanonicalHeader): IggyHeaderValue {
+function iggyHeader(header: CanonicalHeader): HeaderValue {
   switch (header.kind) {
     case "u32":
       return { kind: "uint32", value: u32FromLittleEndian(header) }
@@ -124,15 +120,15 @@ function assemble(envelope: AgentEnvelope, contentType: ContentType): MessageWit
 }
 
 function mintRecordId(source?: UlidSource): RecordId {
-  return RecordId.fromU128(mintUlidValue(source))
+  return MintUlid.mint(RecordId, source)
 }
 
 function mintCorrelationId(source?: UlidSource): CorrelationId {
-  return CorrelationId.fromU128(mintUlidValue(source))
+  return MintUlid.mint(CorrelationId, source)
 }
 
 function mintChannelId(source?: UlidSource): ChannelId {
-  return ChannelId.fromU128(mintUlidValue(source))
+  return MintUlid.mint(ChannelId, source)
 }
 
 class AgdxReplyReader {
@@ -223,7 +219,6 @@ class AgdxReplyReader {
 }
 
 export interface Agdx {
-  readonly topicName: string
   command(correlation: CorrelationId, body: BytesLike): AgdxSend
   respond(correlation: CorrelationId, body: BytesLike): AgdxSend
   emit(body: BytesLike): AgdxSend
@@ -238,12 +233,23 @@ export interface Agdx {
   ): Promise<Uint8Array>
 }
 
+interface ClaimCheck {
+  readonly store: BlobStore
+  readonly thresholdBytes: number
+}
+
+interface PreparedSend {
+  readonly envelope: AgentEnvelope
+  readonly contentType: ContentType
+}
+
 interface AgdxPublisher {
   prepare(
     envelope: AgentEnvelope,
     contentType: ContentType,
-    signingKey?: SigningKey
-  ): Promise<AgentEnvelope>
+    signingKey?: SigningKey,
+    claimCheck?: ClaimCheck
+  ): Promise<PreparedSend>
   publish(envelope: AgentEnvelope, contentType: ContentType): Promise<RecordId | undefined>
   assemble(envelope: AgentEnvelope, contentType: ContentType): MessageWithHeaders
   publishBatch(messages: readonly MessageWithHeaders[]): Promise<void>
@@ -386,20 +392,32 @@ class AgdxClient implements Agdx, AgdxPublisher {
   async prepare(
     envelope: AgentEnvelope,
     contentType: ContentType,
-    signingKey?: SigningKey
-  ): Promise<AgentEnvelope> {
+    signingKey?: SigningKey,
+    claimCheck?: ClaimCheck
+  ): Promise<PreparedSend> {
     const body =
       this.govern === undefined
         ? envelope.body
         : await this.govern(envelope, signingKey !== undefined)
-    const governed = body === envelope.body ? envelope : { ...envelope, body }
-    if (signingKey === undefined) return governed
+    let prepared = body === envelope.body ? envelope : { ...envelope, body }
+    let preparedType = contentType
+    // Claim-check runs after governance and before signing, so the signature
+    // covers the capsule the log carries.
+    if (claimCheck !== undefined) {
+      const checked = await checkIn(claimCheck.store, claimCheck.thresholdBytes, prepared.body)
+      prepared = { ...prepared, body: checked.payload }
+      if (checked.contentType !== undefined) preparedType = checked.contentType
+    }
+    if (signingKey === undefined) return { envelope: prepared, contentType: preparedType }
     return {
-      ...governed,
-      signature: signingKey.signWithContext(governed, {
-        contentType: contentTypeCode(contentType),
-        agentVersion: AGENT_OP_VERSION
-      })
+      envelope: {
+        ...prepared,
+        signature: signingKey.signWithContext(prepared, {
+          contentType: contentTypeCode(preparedType),
+          agentVersion: AGENT_OP_VERSION
+        })
+      },
+      contentType: preparedType
     }
   }
 
@@ -435,7 +453,7 @@ export function createAgdx(
     transport,
     streamName,
     topicName,
-    parseAgentId(source.asString()),
+    source.wireId(),
     ConversationId.parse(conversation.toString()),
     ulidSource,
     govern,
@@ -458,6 +476,12 @@ export interface AgdxSend {
   contentType(contentType: ContentType): this
   body(body: BytesLike): this
   signedBy(key: SigningKey): this
+  /**
+   * Externalizes a body at or over `thresholdBytes` to `store` at send and
+   * replaces it with the body reference capsule (content type `ref`). Applied
+   * before signing, so a signature covers the capsule the log carries.
+   */
+  claimCheck(store: BlobStore, thresholdBytes: number): this
   send(): Promise<RecordId | undefined>
 }
 
@@ -465,6 +489,7 @@ class AgdxSendBuilder implements AgdxSend {
   private contentTypeValue: ContentType = ContentType.Raw
   private sent = false
   private signingKey: SigningKey | undefined
+  private claimCheckValue: ClaimCheck | undefined
 
   constructor(
     private readonly agdx: AgdxPublisher,
@@ -472,7 +497,7 @@ class AgdxSendBuilder implements AgdxSend {
   ) {}
 
   withTarget(target: SdkAgentId): this {
-    this.envelope = withTarget(this.envelope, wireAgentId(target))
+    this.envelope = withTarget(this.envelope, target.wireId())
     return this
   }
 
@@ -541,11 +566,24 @@ class AgdxSendBuilder implements AgdxSend {
     return this
   }
 
+  claimCheck(store: BlobStore, thresholdBytes: number): this {
+    if (!Number.isSafeInteger(thresholdBytes) || thresholdBytes < 0) {
+      throw new InvalidError("claim-check threshold must be a non-negative safe integer")
+    }
+    this.claimCheckValue = { store, thresholdBytes }
+    return this
+  }
+
   async send(): Promise<RecordId | undefined> {
     if (this.sent) throw new InvalidError("an AGDX send can only be performed once")
     this.sent = true
-    const envelope = await this.agdx.prepare(this.envelope, this.contentTypeValue, this.signingKey)
-    return this.agdx.publish(envelope, this.contentTypeValue)
+    const prepared = await this.agdx.prepare(
+      this.envelope,
+      this.contentTypeValue,
+      this.signingKey,
+      this.claimCheckValue
+    )
+    return this.agdx.publish(prepared.envelope, prepared.contentType)
   }
 }
 
@@ -592,7 +630,7 @@ class AgdxStreamWriter implements AgdxStream {
   }
 
   withTarget(target: SdkAgentId): this {
-    this.target = wireAgentId(target)
+    this.target = target.wireId()
     return this
   }
 

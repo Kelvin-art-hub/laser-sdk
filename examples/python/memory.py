@@ -32,14 +32,14 @@ import laser_sdk as ls
 
 # What the assistant knows. Each line becomes one remembered fact.
 KNOWLEDGE = [
-    "checkout latency spikes are usually database connection pool exhaustion",
-    "billing double-charges trace back to retries without an idempotency key",
+    "gateway latency spikes are usually database connection pool exhaustion",
+    "duplicate config pushes trace back to retries without an idempotency key",
     "search returning stale results means the nightly index rebuild failed",
-    "checkout pages recover fastest by failing over to the read replica",
+    "gateway pages recover fastest by failing over to the read replica",
     "auth token errors after a deploy come from the rotated signing key",
-    "cart abandonment climbs when the cache eviction rate is set too aggressive",
-    "inventory drift is the message queue dropping inventory-adjustment events",
-    "recommendation gaps appear when the search index lags behind the catalog",
+    "storage read misses climb when the cache eviction rate is set too aggressive",
+    "metrics gaps are the message queue dropping sample events",
+    "recommendation gaps appear when the search index lags behind the source data",
 ]
 
 # Bag-of-words embedding width for the model seam below.
@@ -65,7 +65,7 @@ async def main() -> None:
             caps = await laser.capabilities()
 
             # PART 2: DURABLE MEMORY, materialized from the memory topic on the log.
-            if _common.managed_gate(caps.kv, "durable memory", "memory"):
+            if _common.managed_gate(caps.kv.available, "durable memory", "memory"):
                 await run_durable(laser, conversation)
 
             # PART 3: KNOWLEDGE GRAPH, a managed read model.
@@ -80,7 +80,7 @@ async def main() -> None:
 
 async def run_memory(conversation) -> None:
     """Part 1: the four memory verbs as one loop over an in-process vector memory."""
-    memory = ls.Memory.vector(embed)
+    memory = ls.MemoryHandle.vector(embed)
 
     _common.phase("Remember")
     replica_note = None
@@ -94,7 +94,7 @@ async def run_memory(conversation) -> None:
     print(f"remembered {len(KNOWLEDGE)} facts")
 
     _common.phase("Recall")
-    question = "checkout is slow during the sale"
+    question = "gateway is slow during the rollout"
     hits = await memory.recall(semantic=question, limit=3, conversation=conversation)
     print_hits(f"recall for {question!r}:", hits)
 
@@ -138,9 +138,9 @@ async def run_durable(laser, conversation) -> None:
     # cross-conversation on purpose.
     _common.phase("Scope the session: messages and memory under one conversation")
     session = laser.context(conversation)
-    await session.append("audit", b"incident opened: checkout slow")
+    await session.append("audit", b"incident opened: gateway slow")
     scoped_hits = await session.memory(laser.memory_on_topic("incidents")).recall(limit=3)
-    trail = await session.fetch(topics=["audit"], last_n=8)
+    trail = await session.fetch(topics=["audit"], n=8)
     print(
         f"one scope recalled {len(scoped_hits)} durable facts and read back "
         f"{len(trail)} of the conversation's messages"
@@ -151,33 +151,33 @@ async def run_graph(laser) -> None:
     """Part 2: model the same ops domain as a graph and traverse how it connects."""
     # BUILD. A realistic slice of a platform's operational knowledge: services own
     # teams, depend on components, fail over to mitigations, and incidents touch
-    # both. `graph_node` content-addresses the id, so a component named by many
+    # both. `graph_node_entity` content-addresses the id, so a component named by many
     # services is one node, which is what makes this a graph and not a pile of pairs.
     _common.phase("Build the knowledge graph")
     entities = [
-        ("Service", "checkout"),
-        ("Service", "billing"),
+        ("Service", "gateway"),
+        ("Service", "config"),
         ("Service", "search"),
-        ("Service", "cart"),
+        ("Service", "storage"),
         ("Service", "auth"),
         ("Service", "recommendations"),
-        ("Service", "inventory"),
+        ("Service", "metrics"),
         ("Service", "notifications"),
-        ("Component", "orders-db"),
+        ("Component", "hosts-db"),
         ("Component", "db-pool"),
         ("Component", "read-replica"),
         ("Component", "search-index"),
         ("Component", "signing-key"),
         ("Component", "cache"),
-        ("Component", "payment-gateway"),
+        ("Component", "token-service"),
         ("Component", "message-queue"),
-        ("Team", "payments"),
+        ("Team", "identity"),
         ("Team", "search-platform"),
         ("Team", "core-platform"),
         ("Incident", "INC-101"),
         ("Incident", "INC-102"),
     ]
-    by_value = {value: ls.graph_node(label, value) for label, value in entities}
+    by_value = {value: ls.graph_node_entity(label, value) for label, value in entities}
     # Provenance: register each entity as a real record in the `topology` key-value
     # namespace, then point its graph node at that record, so the node's source is a
     # live deep link the console renders as a click-through to the actual KV entry.
@@ -186,36 +186,36 @@ async def run_graph(laser) -> None:
     for value, node in by_value.items():
         kind = node["labels"][0] if node.get("labels") else "Entity"
         await registry.set(value).json({"kind": kind, "value": value}).send()
-        node["source"] = {"kind": "kv", "namespace": "topology", "key": value}
+        node["source"] = {"Kv": {"namespace": "topology", "key": value}}
     relationships = [
-        ("checkout", "depends_on", "orders-db"),
-        ("checkout", "depends_on", "db-pool"),
-        ("checkout", "depends_on", "payment-gateway"),
-        ("checkout", "mitigated_by", "read-replica"),
-        ("billing", "depends_on", "orders-db"),
-        ("billing", "depends_on", "signing-key"),
-        ("billing", "depends_on", "payment-gateway"),
+        ("gateway", "depends_on", "hosts-db"),
+        ("gateway", "depends_on", "db-pool"),
+        ("gateway", "depends_on", "token-service"),
+        ("gateway", "mitigated_by", "read-replica"),
+        ("config", "depends_on", "hosts-db"),
+        ("config", "depends_on", "signing-key"),
+        ("config", "depends_on", "token-service"),
         ("search", "depends_on", "search-index"),
         ("search", "depends_on", "cache"),
         ("search", "mitigated_by", "cache"),
-        ("cart", "depends_on", "cache"),
-        ("cart", "depends_on", "orders-db"),
+        ("storage", "depends_on", "cache"),
+        ("storage", "depends_on", "hosts-db"),
         ("auth", "depends_on", "signing-key"),
         ("recommendations", "depends_on", "search-index"),
         ("recommendations", "depends_on", "cache"),
-        ("inventory", "depends_on", "orders-db"),
-        ("inventory", "depends_on", "message-queue"),
+        ("metrics", "depends_on", "hosts-db"),
+        ("metrics", "depends_on", "message-queue"),
         ("notifications", "depends_on", "message-queue"),
-        ("read-replica", "replicates", "orders-db"),
-        ("payments", "owns", "checkout"),
-        ("payments", "owns", "billing"),
+        ("read-replica", "replicates", "hosts-db"),
+        ("identity", "owns", "gateway"),
+        ("identity", "owns", "config"),
         ("search-platform", "owns", "search"),
         ("search-platform", "owns", "recommendations"),
         ("core-platform", "owns", "auth"),
-        ("core-platform", "owns", "cart"),
-        ("core-platform", "owns", "inventory"),
+        ("core-platform", "owns", "storage"),
+        ("core-platform", "owns", "metrics"),
         ("core-platform", "owns", "notifications"),
-        ("INC-101", "affected", "checkout"),
+        ("INC-101", "affected", "gateway"),
         ("INC-101", "affected", "db-pool"),
         ("INC-102", "affected", "search"),
         ("INC-102", "affected", "search-index"),
@@ -228,19 +228,19 @@ async def run_graph(laser) -> None:
     MITIGATION_SINCE_US = 1_900_000_000_000_000
     edges = []
     for src, rel, dst in relationships:
-        edge = ls.graph_edge(by_value[src], rel, by_value[dst])
+        edge = ls.graph_edge_relate(by_value[src], rel, by_value[dst])
         # The relationship was asserted by the `src` entity's memory, so the edge
         # carries that source (last-writer on the edge).
-        edge["source"] = {"kind": "kv", "namespace": "topology", "key": src}
+        edge = ls.graph_edge_with_source(edge, {"Kv": {"namespace": "topology", "key": src}})
         if rel == "mitigated_by":
-            edge["valid_from"] = MITIGATION_SINCE_US
+            edge = ls.graph_edge_valid(edge, MITIGATION_SINCE_US, None)
         edges.append(edge)
 
     # Register the graph projection so the console explorer lists `ops`. The
     # entity schema is the extraction plan: bind it to a source topic and the
     # projector applies it per record. This demo writes the graph directly with
     # the `upsert` below, the same content-addressed write path.
-    await laser.register_graph(
+    await laser.projections().register_graph(
         {
             "id": f"{GRAPH}.v1",
             "name": GRAPH,
@@ -267,43 +267,55 @@ async def run_graph(laser) -> None:
     print(f"registered and upserted {len(nodes)} nodes, {len(edges)} edges in the {GRAPH!r} graph")
 
     _common.phase("Read a node's neighbors")
-    around = await graph.neighbors(by_value["checkout"]["id"], direction="out", depth=1)
-    print_nodes("checkout's one-hop neighborhood", around["nodes"])
+    around = await graph.neighbors(by_value["gateway"]["id"], "out", None, 1)
+    print_nodes("gateway's one-hop neighborhood", around.get("nodes", []))
 
     _common.phase("Traverse from a predicate")
-    dependencies = await graph.query(match_label="Service", hops=[("depends_on", "out")], limit=100)
-    print_nodes_of("components every Service depends on", "Component", dependencies["nodes"])
+    dependencies = await (
+        laser.graph(GRAPH)
+        .start_match(ls.Filter.pred("label", "eq", "Service"))
+        .out("depends_on")
+        .limit(100)
+        .fetch()
+    )
+    print_nodes_of(
+        "components every Service depends on", "Component", dependencies.get("nodes", [])
+    )
 
     _common.phase("Trace an incident's blast radius")
     incident_id = by_value["INC-101"]["id"]
-    blast = await graph.query(start_ids=[incident_id], hops=[("affected", "out")])
-    touched = sorted(
-        node.get("attrs", {}).get("value", "?")
-        for node in blast["nodes"]
-        if node["id"] != incident_id
-    )
+    blast = await laser.graph(GRAPH).start_ids([incident_id]).out("affected").fetch()
+    touched = sorted(value_of(node) for node in blast.get("nodes", []) if node["id"] != incident_id)
     print(f"what INC-101 affected: {', '.join(touched)}")
 
     _common.phase("Trace a node back to its source")
-    checkout_id = by_value["checkout"]["id"]
-    checkout_node = next((n for n in around["nodes"] if n["id"] == checkout_id), None)
-    source = (checkout_node or {}).get("source")
-    if source and source.get("kind") == "kv":
-        print(f"checkout's source record is {source['namespace']}/{source['key']}")
+    gateway_id = by_value["gateway"]["id"]
+    gateway_node = next((n for n in around.get("nodes", []) if n["id"] == gateway_id), None)
+    source = ((gateway_node or {}).get("source") or {}).get("Kv")
+    if source:
+        print(f"gateway's source record is {source['namespace']}/{source['key']}")
 
     _common.phase("Read the graph as of a point in time")
-    before = await graph.query(
-        start_ids=[checkout_id], hops=[("mitigated_by", "out")], as_of=MITIGATION_SINCE_US - 1
+    before = await (
+        laser.graph(GRAPH)
+        .start_ids([gateway_id])
+        .out("mitigated_by")
+        .as_of(MITIGATION_SINCE_US - 1)
+        .fetch()
     )
-    after = await graph.query(
-        start_ids=[checkout_id], hops=[("mitigated_by", "out")], as_of=MITIGATION_SINCE_US + 1
+    after = await (
+        laser.graph(GRAPH)
+        .start_ids([gateway_id])
+        .out("mitigated_by")
+        .as_of(MITIGATION_SINCE_US + 1)
+        .fetch()
     )
-    n_before = sum(1 for node in before["nodes"] if node["id"] != checkout_id)
-    n_after = sum(1 for node in after["nodes"] if node["id"] != checkout_id)
-    print(f"checkout mitigations before the rollout: {n_before}, after: {n_after}")
+    n_before = sum(1 for node in before.get("nodes", []) if node["id"] != gateway_id)
+    n_after = sum(1 for node in after.get("nodes", []) if node["id"] != gateway_id)
+    print(f"gateway mitigations before the rollout: {n_before}, after: {n_after}")
 
     _common.phase("Return whole paths")
-    paths = await graph.query(start_ids=[incident_id], hops=[("affected", "out")], returns="paths")
+    paths = await laser.graph(GRAPH).start_ids([incident_id]).out("affected").return_paths().fetch()
     print(f"INC-101 reaches {len(paths.get('paths', []))} components by a traced path")
 
 
@@ -315,7 +327,7 @@ def _token_hash(text: str) -> int:
 
 
 # A deterministic bag-of-words embedder, the model seam an app fills (a real
-# deployment calls an embedding model here). Async because the SDK awaits it.
+# deployment calls an embedding model here).
 def embed(text: str) -> list[float]:
     vector = [0.0] * DIMS
     for token in text.lower().split():
@@ -331,20 +343,23 @@ def embed(text: str) -> list[float]:
 def print_hits(label: str, hits) -> None:
     print(label)
     for rank, hit in enumerate(hits, start=1):
-        print(f"  {rank}. ({hit.score or 0.0:.3f}) {hit.text}")
+        print(f"  {rank}. ({hit.score or 0.0:.3f}) {hit.text()}")
+
+
+def value_of(node: dict) -> str:
+    """A node's `value` attribute. Attributes are `[name, value]` pairs."""
+    return dict(node.get("attrs", [])).get("value", "?")
 
 
 def print_nodes(label: str, nodes) -> None:
-    values = sorted(node.get("attrs", {}).get("value", "?") for node in nodes)
+    values = sorted(value_of(node) for node in nodes)
     print(f"{label}: {', '.join(values)}")
 
 
 def print_nodes_of(label: str, kind: str, nodes) -> None:
     # A traversal result is seeded with its start frontier, so the start nodes ride
     # along. Narrow to one entity kind to print just what was reached.
-    values = sorted(
-        node.get("attrs", {}).get("value", "?") for node in nodes if kind in node.get("labels", [])
-    )
+    values = sorted(value_of(node) for node in nodes if kind in node.get("labels", []))
     print(f"{label}: {', '.join(values)}")
 
 

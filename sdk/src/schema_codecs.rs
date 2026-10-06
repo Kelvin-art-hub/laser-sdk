@@ -17,14 +17,14 @@ use std::sync::Arc;
 /// # use laser_sdk::prelude::*;
 /// # use laser_sdk::schema_codecs::CompiledSchema;
 /// # use serde::Serialize;
-/// # #[derive(Serialize)] struct Order { customer: String, amount: i64 }
-/// # async fn run(laser: &Laser, order: Order) -> Result<(), LaserError> {
+/// # #[derive(Serialize)] struct Reading { host: String, cpu: i64 }
+/// # async fn run(laser: &Laser, reading: Reading) -> Result<(), LaserError> {
 /// let info = laser.schemas().get(7).await?.expect("schema registered");
 /// let compiled = CompiledSchema::compile(&info.schema)?;
-/// let orders = laser.topic("orders");
-/// orders.publish()
-///     .index("customer", &order.customer)
-///     .avro(&compiled, 7, &order)?
+/// let readings = laser.topic("readings");
+/// readings.publish()
+///     .index("host", &reading.host)
+///     .avro(&compiled, 7, &reading)?
 ///     .send().await?;
 /// # Ok(()) }
 /// ```
@@ -138,9 +138,11 @@ impl CompiledSchema {
                     .map_err(|error| {
                         LaserError::Codec(format!("payload does not decode as Avro: {error}"))
                     })?;
-                apache_avro::from_value::<serde_json::Value>(&value).map_err(|error| {
-                    LaserError::Codec(format!("Avro value does not lower to JSON: {error}"))
-                })
+                apache_avro::from_value::<serde_json::Value>(&bytes_as_arrays(value)).map_err(
+                    |error| {
+                        LaserError::Codec(format!("Avro value does not lower to JSON: {error}"))
+                    },
+                )
             }
             Self::Protobuf(descriptor) => {
                 let message =
@@ -184,7 +186,7 @@ impl CompiledSchema {
         let json = serde_json::to_value(body)
             .map_err(|error| LaserError::Codec(format!("body does not lower to JSON: {error}")))?;
         let resolved = apache_avro::types::Value::try_from(json)
-            .and_then(|value| value.resolve(schema))
+            .and_then(|value| arrays_as_bytes(value, schema).resolve(schema))
             .map_err(|error| {
                 LaserError::Codec(format!("body does not match the Avro schema: {error}"))
             })?;
@@ -195,29 +197,151 @@ impl CompiledSchema {
     }
 }
 
+// The inverse of `bytes_as_arrays`, guided by the schema: a JSON array of byte
+// values in a `bytes` or `fixed` position becomes Avro bytes, which also
+// resolves into `fixed`. Arrays anywhere else stay arrays.
+fn arrays_as_bytes(
+    value: apache_avro::types::Value,
+    schema: &apache_avro::Schema,
+) -> apache_avro::types::Value {
+    use apache_avro::Schema;
+    use apache_avro::types::Value;
+    match (schema, value) {
+        (Schema::Bytes | Schema::Fixed(_), Value::Array(items)) => {
+            let bytes: Option<Vec<u8>> = items
+                .iter()
+                .map(|item| match item {
+                    Value::Int(byte) => u8::try_from(*byte).ok(),
+                    Value::Long(byte) => u8::try_from(*byte).ok(),
+                    _ => None,
+                })
+                .collect();
+            bytes.map_or(Value::Array(items), Value::Bytes)
+        }
+        (Schema::Array(array), Value::Array(items)) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| arrays_as_bytes(item, &array.items))
+                .collect(),
+        ),
+        (Schema::Map(map), Value::Map(entries)) => Value::Map(
+            entries
+                .into_iter()
+                .map(|(key, item)| (key, arrays_as_bytes(item, &map.types)))
+                .collect(),
+        ),
+        (Schema::Record(record), Value::Map(entries)) => Value::Map(
+            entries
+                .into_iter()
+                .map(|(key, item)| {
+                    let item = match record.fields.iter().find(|field| field.name == key) {
+                        Some(field) => arrays_as_bytes(item, &field.schema),
+                        None => item,
+                    };
+                    (key, item)
+                })
+                .collect(),
+        ),
+        (Schema::Union(union), value) => {
+            let variant = union.variants().iter().find(|variant| {
+                matches!(
+                    (variant, &value),
+                    (Schema::Bytes | Schema::Fixed(_), Value::Array(_))
+                        | (Schema::Record(_) | Schema::Map(_), Value::Map(_))
+                )
+            });
+            let has_array = union
+                .variants()
+                .iter()
+                .any(|variant| matches!(variant, Schema::Array(_)));
+            match variant {
+                Some(variant) if !(has_array && matches!(value, Value::Array(_))) => {
+                    arrays_as_bytes(value, variant)
+                }
+                _ => value,
+            }
+        }
+        (_, value) => value,
+    }
+}
+
+// JSON has no byte type, so an Avro `bytes` or `fixed` value lowers to an
+// array of byte values, the same shape `encode_avro` accepts for that field.
+fn bytes_as_arrays(value: apache_avro::types::Value) -> apache_avro::types::Value {
+    use apache_avro::types::Value;
+    match value {
+        Value::Bytes(bytes) | Value::Fixed(_, bytes) => Value::Array(
+            bytes
+                .into_iter()
+                .map(|byte| Value::Int(i32::from(byte)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.into_iter().map(bytes_as_arrays).collect()),
+        Value::Map(entries) => Value::Map(
+            entries
+                .into_iter()
+                .map(|(key, item)| (key, bytes_as_arrays(item)))
+                .collect(),
+        ),
+        Value::Record(fields) => Value::Record(
+            fields
+                .into_iter()
+                .map(|(name, item)| (name, bytes_as_arrays(item)))
+                .collect(),
+        ),
+        Value::Union(index, item) => Value::Union(index, Box::new(bytes_as_arrays(*item))),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const ORDER_AVRO_SCHEMA: &str = r#"{
-        "type":"record","name":"Order",
+    #[test]
+    fn given_bytes_and_fixed_fields_when_encoded_then_should_decode_back() {
+        let def = SchemaDef {
+            id: 8,
+            source: SchemaSource::Avro {
+                schema: r#"{
+                    "type":"record","name":"Frame",
+                    "fields":[
+                        {"name":"body","type":"bytes"},
+                        {"name":"digest","type":{"type":"fixed","name":"Digest","size":2}},
+                        {"name":"tag","type":["null","bytes"]}
+                    ]
+                }"#
+                .to_owned(),
+            },
+            name: None,
+            version: None,
+        };
+        let compiled = CompiledSchema::compile(&def).expect("schema compiles");
+        let body = serde_json::json!({"body": [1, 2, 255], "digest": [7, 9], "tag": [4]});
+        let datum = compiled.encode_avro(&body).expect("body encodes");
+        assert!(compiled.validate(&datum), "own encoding validates");
+        assert_eq!(compiled.decode(&datum).expect("datum decodes"), body);
+    }
+
+    const READING_AVRO_SCHEMA: &str = r#"{
+        "type":"record","name":"Reading",
         "fields":[
-            {"name":"customer","type":"string"},
-            {"name":"amount","type":"long"}
+            {"name":"host","type":"string"},
+            {"name":"cpu","type":"long"}
         ]
     }"#;
 
     #[derive(Serialize)]
-    struct Order {
-        customer: String,
-        amount: i64,
+    struct Reading {
+        host: String,
+        cpu: i64,
     }
 
     fn avro_def() -> SchemaDef {
         SchemaDef {
             id: 7,
             source: SchemaSource::Avro {
-                schema: ORDER_AVRO_SCHEMA.to_owned(),
+                schema: READING_AVRO_SCHEMA.to_owned(),
             },
             name: None,
             version: None,
@@ -227,18 +351,18 @@ mod tests {
     #[test]
     fn given_an_avro_def_when_encoded_then_should_decode_and_validate_back() {
         let compiled = CompiledSchema::compile(&avro_def()).expect("schema compiles");
-        let order = Order {
-            customer: "alice".to_owned(),
-            amount: 42,
+        let reading = Reading {
+            host: "node-7".to_owned(),
+            cpu: 42,
         };
-        let datum = compiled.encode_avro(&order).expect("body encodes");
+        let datum = compiled.encode_avro(&reading).expect("body encodes");
         assert!(compiled.validate(&datum), "own encoding validates");
         let value = compiled.decode(&datum).expect("datum decodes");
         assert_eq!(
-            value.pointer("/customer").and_then(|v| v.as_str()),
-            Some("alice")
+            value.pointer("/host").and_then(|v| v.as_str()),
+            Some("node-7")
         );
-        assert_eq!(value.pointer("/amount").and_then(|v| v.as_i64()), Some(42));
+        assert_eq!(value.pointer("/cpu").and_then(|v| v.as_i64()), Some(42));
     }
 
     #[test]
@@ -281,10 +405,10 @@ mod tests {
             source: SchemaSource::JsonSchema {
                 schema: r#"{
                     "type":"object",
-                    "required":["customer","amount"],
+                    "required":["host","cpu"],
                     "properties":{
-                        "customer":{"type":"string"},
-                        "amount":{"type":"integer","minimum":0}
+                        "host":{"type":"string"},
+                        "cpu":{"type":"integer","minimum":0}
                     }
                 }"#
                 .to_owned(),
@@ -293,20 +417,20 @@ mod tests {
             version: None,
         };
         let compiled = CompiledSchema::compile(&def).expect("schema compiles");
-        assert!(compiled.validate(br#"{"customer":"alice","amount":42}"#));
-        assert!(!compiled.validate(br#"{"customer":"alice","amount":"42"}"#));
+        assert!(compiled.validate(br#"{"host":"node-7","cpu":42}"#));
+        assert!(!compiled.validate(br#"{"host":"node-7","cpu":"42"}"#));
         assert!(!compiled.validate(b"not json"));
-        assert!(compiled.validate_value(&serde_json::json!({"customer":"a","amount":1})));
-        assert!(!compiled.validate_value(&serde_json::json!({"amount":1})));
+        assert!(compiled.validate_value(&serde_json::json!({"host":"a","cpu":1})));
+        assert!(!compiled.validate_value(&serde_json::json!({"cpu":1})));
         let value = compiled
-            .decode(br#"{"customer":"alice","amount":42}"#)
+            .decode(br#"{"host":"node-7","cpu":42}"#)
             .expect("valid payload decodes");
         assert_eq!(
-            value.pointer("/customer").and_then(|v| v.as_str()),
-            Some("alice")
+            value.pointer("/host").and_then(|v| v.as_str()),
+            Some("node-7")
         );
         assert!(matches!(
-            compiled.decode(br#"{"amount":42}"#),
+            compiled.decode(br#"{"cpu":42}"#),
             Err(LaserError::Codec(_))
         ));
         assert!(matches!(
@@ -334,17 +458,17 @@ mod tests {
     #[test]
     fn given_an_avro_def_when_value_validated_then_should_report_family_mismatch() {
         let compiled = CompiledSchema::compile(&avro_def()).expect("schema compiles");
-        assert!(!compiled.validate_value(&serde_json::json!({"customer":"a","amount":1})));
+        assert!(!compiled.validate_value(&serde_json::json!({"host":"a","cpu":1})));
     }
 
     #[test]
     fn given_a_protobuf_def_when_compiled_then_should_validate_real_messages() {
         use prost::Message;
         let dir = tempfile::tempdir().expect("temp dir");
-        let proto = dir.path().join("order.proto");
+        let proto = dir.path().join("reading.proto");
         std::fs::write(
             &proto,
-            "syntax = \"proto3\";\npackage shop;\nmessage Order { string customer = 1; int64 amount = 2; }\n",
+            "syntax = \"proto3\";\npackage fleet;\nmessage Reading { string host = 1; int64 cpu = 2; }\n",
         )
         .expect("proto written");
         let descriptor_set = protox::compile([&proto], [dir.path()])
@@ -354,7 +478,7 @@ mod tests {
             id: 3,
             source: SchemaSource::Protobuf {
                 descriptor_set: descriptor_set.clone(),
-                message_type: "shop.Order".to_owned(),
+                message_type: "fleet.Reading".to_owned(),
             },
             name: None,
             version: None,
@@ -362,18 +486,18 @@ mod tests {
         let compiled = CompiledSchema::compile(&def).expect("schema compiles");
 
         let pool = DescriptorPool::decode(descriptor_set.as_slice()).expect("pool decodes");
-        let descriptor = pool.get_message_by_name("shop.Order").expect("message");
+        let descriptor = pool.get_message_by_name("fleet.Reading").expect("message");
         let mut message = DynamicMessage::new(descriptor);
-        message.set_field_by_name("customer", prost_reflect::Value::String("alice".into()));
-        message.set_field_by_name("amount", prost_reflect::Value::I64(42));
+        message.set_field_by_name("host", prost_reflect::Value::String("node-7".into()));
+        message.set_field_by_name("cpu", prost_reflect::Value::I64(42));
         let payload = message.encode_to_vec();
 
         assert!(compiled.validate(&payload));
         assert!(!compiled.validate(b"\xff\xff\xff"));
         let value = compiled.decode(&payload).expect("decodes");
         assert_eq!(
-            value.pointer("/customer").and_then(|v| v.as_str()),
-            Some("alice")
+            value.pointer("/host").and_then(|v| v.as_str()),
+            Some("node-7")
         );
         let encode = compiled.encode_avro(&serde_json::json!({}));
         assert!(matches!(encode, Err(LaserError::Invalid(_))));

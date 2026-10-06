@@ -25,8 +25,8 @@ import _common
 import laser_sdk as ls
 
 EXAMPLE = "agent"
-COMMANDS = ls.Topics.COMMANDS
-RESPONSES = ls.Topics.RESPONSES
+COMMANDS = ls.AgentTopic.Commands
+RESPONSES = ls.AgentTopic.Responses
 CAPABILITY = "resolve-ticket"
 DEADLINE_MS = 60_000
 
@@ -52,8 +52,9 @@ async def main() -> None:
             # The advertised capability is what makes this agent addressable by what
             # it can do rather than by the name it happens to run under.
             capabilities=[CAPABILITY],
-            # Acknowledge on pickup, so a crash mid-handler is a retry rather than a
-            # silently dropped task.
+            # Emit a Working status on pickup, so a contract caller can tell the
+            # command was consumed. Redelivery after a crash comes from
+            # commit-after-success.
             ack_on_pickup=True,
         )
         await triage.ready()
@@ -67,10 +68,10 @@ async def main() -> None:
             fixed_inbox=COMMANDS,
             deadline_ms=DEADLINE_MS,
         )
-        if reply is None:
-            print("  contract ended without a reply")
+        if isinstance(reply, ls.Contract.Completed):
+            print(f"  contract completed: {bytes(reply[0].body()).decode()}")
         else:
-            print(f"  contract completed: {reply.decode()}")
+            print(f"  contract ended without a reply: {reply!r}")
 
         await triage.shutdown()
     finally:

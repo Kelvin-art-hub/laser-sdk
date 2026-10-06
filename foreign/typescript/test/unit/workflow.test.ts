@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { InvalidError } from "../../src/client/errors.js"
+import { CancelledError, InvalidError } from "../../src/client/errors.js"
 import { topologicalOrder } from "../../src/agent/workflow.js"
 import { Workflow } from "../../src/agent/workflow.js"
 import type { Contract } from "../../src/agent/contract.js"
@@ -97,7 +97,7 @@ void test("given_an_exclusive_namespace_when_dispatched_then_should_propagate_it
     }
   } as unknown as Laser
 
-  const outcome = await new Workflow(fake, "orchestrator")
+  const outcome = await Workflow.create(fake, "orchestrator")
     .step("effect", routeTo(AgentId.new("worker")), () => new TextEncoder().encode("apply"))
     .exclusiveIn("incident-effects")
     .run()
@@ -108,82 +108,92 @@ void test("given_an_exclusive_namespace_when_dispatched_then_should_propagate_it
   assert.deepEqual(events, ["journal", "release"])
 })
 
-void test("given_a_slow_renewal_when_the_contract_completes_then_should_journal_while_renewal_remains_in_flight", async () => {
-  const events: string[] = []
-  let completeContract: ((value: Contract) => void) | undefined
-  let completeRenewal: (() => void) | undefined
-  let markRenewalStarted: (() => void) | undefined
-  const contractResult = new Promise<Contract>((resolve) => {
-    completeContract = resolve
-  })
-  const renewalResult = new Promise<void>((resolve) => {
-    completeRenewal = resolve
-  })
-  const renewalStarted = new Promise<void>((resolve) => {
-    markRenewalStarted = resolve
-  })
-  const contract = {
-    from: () => contract,
-    payload: () => contract,
-    inboxRoute: () => contract,
-    deadline: () => contract,
-    conversation: () => contract,
-    fence: () => contract,
-    send: () => contractResult
-  }
-  const fake = {
-    capabilities: () => Promise.resolve({ kv: { fencedLeases: true } }),
-    context: () => ({ fetch: () => Promise.resolve([]) }),
-    kv: () => ({
-      lease: () =>
-        Promise.resolve({
-          token: 41n,
-          grantedTtlMicros: 100_000n,
-          position: { topicGeneration: 1n, partition: 0, offset: 1n }
-        }),
-      renewLease: async () => {
-        events.push("renew-start")
-        markRenewalStarted?.()
-        await renewalResult
-        events.push("renew-finish")
-        return {
-          token: 41n,
-          grantedTtlMicros: 60_000_000n,
-          position: { topicGeneration: 1n, partition: 0, offset: 2n }
+void test(
+  "given_a_slow_renewal_when_the_contract_completes_then_should_journal_while_renewal_remains_in_flight",
+  { timeout: 5_000 },
+  async (context) => {
+    context.mock.method(performance, "now", () => 0)
+    const events: string[] = []
+    let completeContract: ((value: Contract) => void) | undefined
+    let completeRenewal: (() => void) | undefined
+    let markRenewalStarted: (() => void) | undefined
+    const contractResult = new Promise<Contract>((resolve) => {
+      completeContract = resolve
+    })
+    const renewalResult = new Promise<void>((resolve) => {
+      completeRenewal = resolve
+    })
+    const renewalStarted = new Promise<void>((resolve) => {
+      markRenewalStarted = resolve
+    })
+    const contract = {
+      from: () => contract,
+      payload: () => contract,
+      inboxRoute: () => contract,
+      deadline: () => contract,
+      conversation: () => contract,
+      fence: () => contract,
+      send: () => contractResult
+    }
+    const fake = {
+      capabilities: () => Promise.resolve({ kv: { fencedLeases: true } }),
+      context: () => ({ fetch: () => Promise.resolve([]) }),
+      kv: () => ({
+        lease: () =>
+          Promise.resolve({
+            token: 41n,
+            grantedTtlMicros: 100_000n,
+            position: { topicGeneration: 1n, partition: 0, offset: 1n }
+          }),
+        renewLease: async () => {
+          events.push("renew-start")
+          markRenewalStarted?.()
+          await renewalResult
+          events.push("renew-finish")
+          return {
+            token: 41n,
+            grantedTtlMicros: 60_000_000n,
+            position: { topicGeneration: 1n, partition: 0, offset: 2n }
+          }
+        },
+        release: () => {
+          events.push("release")
+          return Promise.resolve(true)
         }
-      },
-      release: () => {
-        events.push("release")
-        return Promise.resolve(true)
+      }),
+      contract: () => contract,
+      sendAgent: () => {
+        events.push("journal")
+        return Promise.resolve()
       }
-    }),
-    contract: () => contract,
-    sendAgent: () => {
-      events.push("journal")
-      return Promise.resolve()
-    }
-  } as unknown as Laser
+    } as unknown as Laser
 
-  const running = new Workflow(fake, "orchestrator")
-    .step("effect", routeTo(AgentId.new("worker")), () => new Uint8Array())
-    .exclusive()
-    .run()
-  await renewalStarted
-  assert.deepEqual(events, ["renew-start"])
-  completeContract?.({
-    kind: "completed",
-    reply: {
-      provenance: { conversationId: ConversationId.new() },
-      payload: new TextEncoder().encode("done"),
-      id: { partitionId: 0, offset: 0n }
-    }
-  })
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.deepEqual(events, ["renew-start", "journal"])
-  completeRenewal?.()
-  await running
-  assert.deepEqual(events, ["renew-start", "journal", "renew-finish", "release"])
-})
+    const running = Workflow.create(fake, "orchestrator")
+      .step("effect", routeTo(AgentId.new("worker")), () => new Uint8Array())
+      .exclusive()
+      .run()
+    const result = running.then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error })
+    )
+    await renewalStarted
+    assert.deepEqual(events, ["renew-start"])
+    completeContract?.({
+      kind: "completed",
+      reply: {
+        provenance: { conversationId: ConversationId.new() },
+        payload: new TextEncoder().encode("done"),
+        id: { partitionId: 0, offset: 0n }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.deepEqual(events, ["renew-start", "journal"])
+    completeRenewal?.()
+    const outcome = await result
+    if (!outcome.ok) throw outcome.error
+    assert.deepEqual(events, ["renew-start", "journal", "renew-finish", "release"])
+  }
+)
 
 void test("given_a_timed_out_exclusive_step_when_reassigned_then_should_release_and_use_a_fresh_holder", async () => {
   const holders: string[] = []
@@ -235,7 +245,7 @@ void test("given_a_timed_out_exclusive_step_when_reassigned_then_should_release_
     sendAgent: () => Promise.resolve()
   } as unknown as Laser
 
-  const outcome = await new Workflow(fake, "orchestrator")
+  const outcome = await Workflow.create(fake, "orchestrator")
     .step("effect", routeTo(AgentId.new("worker")), () => new TextEncoder().encode("apply"))
     .exclusive()
     .onTimeout("reassign")
@@ -245,4 +255,34 @@ void test("given_a_timed_out_exclusive_step_when_reassigned_then_should_release_
   assert.notEqual(holders[0], holders[1])
   assert.deepEqual(released, holders)
   assert.deepEqual(fences, [1n, 2n])
+})
+
+void test("given_a_registered_run_with_a_cancel_request_when_executed_then_should_name_the_run", async () => {
+  const states: string[] = []
+  const status = {
+    withCorrelation: () => status,
+    withTaskState: (state: { readonly name: string }) => {
+      states.push(state.name)
+      return status
+    },
+    withMetadata: () => status,
+    send: () => Promise.resolve()
+  }
+  const fake = {
+    capabilities: () => Promise.resolve({ agentWorkflow: true }),
+    context: () => ({ fetch: () => Promise.resolve([]) }),
+    runs: () => ({
+      submitWith: () => Promise.resolve({ runId: "run-9" }),
+      status: () => Promise.resolve({ cancelRequested: true })
+    }),
+    agdx: () => ({ status: () => status })
+  } as unknown as Laser
+  await assert.rejects(
+    Workflow.create(fake, "orchestrator")
+      .step("effect", routeTo(AgentId.new("worker")), () => new TextEncoder().encode("apply"))
+      .registered()
+      .run(),
+    (error: unknown) => error instanceof CancelledError && error.run === "run-9"
+  )
+  assert.deepEqual(states, ["Working", "Canceled"])
 })

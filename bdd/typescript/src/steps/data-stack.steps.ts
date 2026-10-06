@@ -22,8 +22,9 @@ When(
 
 When(
   /^I record a retention gap from required offset (\d+) to retained offset (\d+)$/,
-  function (this: LaserWorld, _required: string, _retained: string) {
-    this.dataStack.recordGap("orders-lakehouse")
+  function (this: LaserWorld, required: string, retained: string) {
+    this.dataStack.recordGap("readings-lakehouse", Number(required), Number(retained))
+    assert.equal(this.dataStack.error, undefined)
   }
 )
 
@@ -31,10 +32,11 @@ When(
   /^I accept the retention gap at next offset (\d+) and checkpoint revision (\d+)$/,
   function (this: LaserWorld, nextOffset: string, checkpointRevision: string) {
     this.dataStack.acceptGap(
-      "orders-lakehouse",
+      "readings-lakehouse",
       Number(nextOffset),
       Number(checkpointRevision)
     )
+    assert.equal(this.dataStack.error, undefined)
   }
 )
 

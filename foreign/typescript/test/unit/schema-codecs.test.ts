@@ -7,61 +7,61 @@ import { CodecError, InvalidError } from "../../src/client/errors.js"
 import { CompiledSchema } from "../../src/schema-codecs.js"
 import type { SchemaDef } from "../../src/wire/control.js"
 
-const ORDER_AVRO = JSON.stringify({
+const READING_AVRO = JSON.stringify({
   type: "record",
-  name: "Order",
+  name: "Reading",
   fields: [
-    { name: "customer", type: "string" },
-    { name: "amount", type: "long" }
+    { name: "host", type: "string" },
+    { name: "cpu", type: "long" }
   ]
 })
 
 const ORDER_JSON_SCHEMA = JSON.stringify({
   type: "object",
-  required: ["customer", "amount"],
+  required: ["host", "cpu"],
   additionalProperties: false,
   properties: {
-    customer: { type: "string" },
-    amount: { type: "integer", minimum: 0 }
+    host: { type: "string" },
+    cpu: { type: "integer", minimum: 0 }
   }
 })
 
 function avroSchema(): SchemaDef {
-  return { id: 7, source: { kind: "avro", schema: ORDER_AVRO } }
+  return { id: 7, source: { kind: "avro", schema: READING_AVRO } }
 }
 
 function protobufSchema(): {
   readonly schema: SchemaDef
-  readonly order: protobuf.Type
+  readonly reading: protobuf.Type
   readonly descriptorSet: Uint8Array
 } {
   const root = new protobuf.Root()
-  const order = new protobuf.Type("Order")
-    .add(new protobuf.Field("customer", 1, "string"))
-    .add(new protobuf.Field("amount", 2, "int64"))
-  root.add(order)
+  const reading = new protobuf.Type("Reading")
+    .add(new protobuf.Field("host", 1, "string"))
+    .add(new protobuf.Field("cpu", 2, "int64"))
+  root.add(reading)
   const descriptorSet = descriptor.FileDescriptorSet.encode(root.toDescriptor("proto3")).finish()
   return {
     schema: {
       id: 8,
-      source: { kind: "protobuf", descriptorSet, messageType: "Order" }
+      source: { kind: "protobuf", descriptorSet, messageType: "Reading" }
     },
-    order,
+    reading,
     descriptorSet
   }
 }
 
 void test("given_an_avro_schema_when_encoded_then_should_decode_and_validate_the_datum", () => {
   const compiled = CompiledSchema.compile(avroSchema())
-  const payload = compiled.encode({ customer: "alice", amount: 42 })
+  const payload = compiled.encodeAvro({ host: "node-1", cpu: 42 })
   assert.equal(compiled.kind, "avro")
   assert.equal(compiled.validate(payload), true)
-  assert.deepEqual(compiled.decode(payload), { customer: "alice", amount: 42 })
+  assert.deepEqual(compiled.decode(payload), { host: "node-1", cpu: 42 })
 })
 
 void test("given_an_avro_mismatch_when_encoded_then_should_reject_before_publish", () => {
   const compiled = CompiledSchema.compile(avroSchema())
-  assert.throws(() => compiled.encode({ unrelated: true }), CodecError)
+  assert.throws(() => compiled.encodeAvro({ unrelated: true }), CodecError)
   assert.equal(compiled.validate(new Uint8Array()), false)
 })
 
@@ -70,22 +70,24 @@ void test("given_a_json_schema_when_used_then_should_validate_values_and_payload
     id: 9,
     source: { kind: "jsonSchema", schema: ORDER_JSON_SCHEMA }
   })
-  const value = { customer: "bob", amount: 17 }
-  const payload = compiled.encode(value)
+  const value = { host: "node-2", cpu: 17 }
+  const codec = compiled.codec((decoded) => decoded)
+  const payload = codec.encode(value)
   assert.equal(compiled.kind, "jsonSchema")
   assert.equal(compiled.validateValue(value), true)
-  assert.equal(compiled.validateValue({ customer: "bob", amount: -1 }), false)
+  assert.equal(compiled.validateValue({ host: "node-2", cpu: -1 }), false)
   assert.deepEqual(compiled.decode(payload), value)
-  assert.throws(() => compiled.encode({ customer: "bob", amount: -1 }), CodecError)
+  assert.throws(() => codec.encode({ host: "node-2", cpu: -1 }), CodecError)
+  assert.throws(() => compiled.encodeAvro(value), InvalidError)
 })
 
 void test("given_a_protobuf_descriptor_when_used_then_should_resolve_encode_and_decode", () => {
   const { schema } = protobufSchema()
   const compiled = CompiledSchema.compile(schema)
-  const payload = compiled.encode({ customer: "carol", amount: 23 })
+  const payload = compiled.codec((decoded) => decoded).encode({ host: "node-3", cpu: 23 })
   assert.equal(compiled.kind, "protobuf")
   assert.equal(compiled.validate(payload), true)
-  assert.deepEqual(compiled.decode(payload), { customer: "carol", amount: "23" })
+  assert.deepEqual(compiled.decode(payload), { host: "node-3", cpu: "23" })
 })
 
 void test("given_malformed_or_missing_schema_sources_when_compiled_then_should_reject", () => {
@@ -107,4 +109,27 @@ void test("given_malformed_or_missing_schema_sources_when_compiled_then_should_r
     InvalidError
   )
   assert.throws(() => CompiledSchema.compile({ id: 3, source: { kind: "unknown" } }), InvalidError)
+})
+
+void test("given_avro_bytes_and_fixed_arrays_when_encoded_then_should_round_trip_without_changing_numeric_arrays", () => {
+  const compiled = CompiledSchema.compile({
+    id: 10,
+    source: {
+      kind: "avro",
+      schema: JSON.stringify({
+        type: "record",
+        name: "BinaryReading",
+        fields: [
+          { name: "body", type: "bytes" },
+          { name: "signature", type: { type: "fixed", name: "Signature", size: 2 } },
+          { name: "counts", type: { type: "array", items: "int" } },
+          { name: "optional", type: ["null", "bytes"] }
+        ]
+      })
+    }
+  })
+  const value = { body: [0, 127, 255], signature: [1, 2], counts: [256, 1024], optional: [3, 4] }
+  assert.deepEqual(compiled.decode(compiled.encodeAvro(value)), value)
+  assert.throws(() => compiled.encodeAvro({ ...value, body: [256] }), CodecError)
+  assert.throws(() => compiled.encodeAvro({ ...value, signature: [1] }), CodecError)
 })

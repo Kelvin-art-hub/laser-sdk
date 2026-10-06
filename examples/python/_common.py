@@ -54,8 +54,8 @@ def stream_for(example: str) -> str:
 
 
 def index_for(base: str) -> str:
-    """A managed index name owned by this invocation (``orders_v1`` becomes
-    ``orders_v1_<token>``), so a repeat or concurrent run materializes its own
+    """A managed index name owned by this invocation (``readings_v1`` becomes
+    ``readings_v1_<token>``), so a repeat or concurrent run materializes its own
     rows instead of counting a previous run's."""
     return f"{base}_{_RUN_TOKEN}"
 
@@ -190,14 +190,14 @@ async def start_projector(laser, topic, fields, *, index=None, content_type="jso
     """Declare `index` (default `topic`'s own name) over `topic` on the managed
     plane and wait until it answers queries, the Python analog of the Rust
     example crate's projector. Naming the index apart from its source topic
-    (`orders` produces `orders_v1`) is what lets a view be versioned without
+    (`readings` produces `readings_v1`) is what lets a view be versioned without
     renaming the topic. Index-only so each record's own `inline_payload` decides
     inlining. Query is a managed feature, so call this only behind a managed
     gate: against Apache Iggy the registration itself raises
     `UnsupportedError`."""
     index = index or topic
     projection_id = f"{index}.v1"
-    await laser.register_projection(
+    await laser.projections().register(
         {
             "id": projection_id,
             "name": index,
@@ -210,7 +210,7 @@ async def start_projector(laser, topic, fields, *, index=None, content_type="jso
             "inline_payload_default": False,
         }
     )
-    await laser.apply_binding(
+    await laser.bindings().apply(
         {
             "source": {"stream": laser.default_stream, "topic": topic},
             "allowed_projections": [projection_id],
@@ -250,7 +250,7 @@ async def wait_for_projection(laser, index, expected) -> int:
         advanced = last < 0 or feed is None or bool(await feed.poll())
         if advanced:
             try:
-                total = (await laser.query(index).with_total().fetch()).total
+                total = (await laser.query(index).with_total().fetch()).page.total
             except ls.LaserError:
                 total = 0
             if total != last:

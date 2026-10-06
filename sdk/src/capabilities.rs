@@ -1,14 +1,13 @@
 use laser_wire::checkpoint::CheckpointReadConsistency;
 use laser_wire::filter::FilterCodec;
-use laser_wire::hello::FilterAnnounce;
 use laser_wire::query::Consistency;
 
 pub use laser_wire::destination::BackendResourceId;
 pub use laser_wire::hello::{
     BackendDescriptor, BackendDesiredState, BackendImplementation, BackendLimits, BackendMode,
     BackendObservedState, BackendReadiness, BackendReadinessCode, BackendReadinessReason,
-    MaintenanceCapabilities, MaterializationCapability, OpVersions, QueryCapabilities,
-    QueryPagingCapability, SchemaCapabilities, TimeTravelCapability,
+    FilterAnnounce, MaintenanceCapabilities, MaterializationCapability, OpVersions,
+    QueryCapabilities, QueryPagingCapability, SchemaCapabilities, TimeTravelCapability,
 };
 
 /// What the connected infrastructure serves beyond the open SDK surface. The open
@@ -24,9 +23,7 @@ pub use laser_wire::hello::{
 /// [`kv`](Self::kv), [`graph`](Self::graph), [`forks`](Self::forks),
 /// [`a2a_gateway`](Self::a2a_gateway)) are served by that plane. A surface's
 /// sub-features nest under it ([`QueryCaps::consistency`], [`KvCaps::cas`]) so a
-/// dependent feature cannot be advertised apart from the surface it refines. The
-/// platform-native features ([`sessions`](Self::sessions),
-/// [`durable_dedup`](Self::durable_dedup)) are not plane surfaces.
+/// dependent feature cannot be advertised apart from the surface it refines.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Capabilities {
@@ -62,10 +59,6 @@ pub struct Capabilities {
     /// `filter()` handle: native filtered reads and, with a managed plane,
     /// the group policy catalog.
     pub filters: FilterCaps,
-    /// Platform-native session lifecycle (the infrastructure tracks a session).
-    pub sessions: bool,
-    /// Platform-side durable deduplication (survives a cold start without replay).
-    pub durable_dedup: bool,
     /// The wire op versions the server advertised in its `AGDX_HELLO` reply, or
     /// `None` against Apache Iggy and pre-versioned servers. When present, the
     /// SDK fails fast with the surface's typed `Version` error before a round-trip
@@ -211,8 +204,6 @@ impl Capabilities {
             group_policy_reads: false,
             evaluation: None,
         },
-        sessions: false,
-        durable_dedup: false,
         versions: None,
         backends: Vec::new(),
         hello: HelloOutcome::Unknown,
@@ -221,7 +212,9 @@ impl Capabilities {
     /// True when the connected infrastructure advertised nothing beyond the open
     /// SDK (`OPEN`).
     pub fn is_open_only(&self) -> bool {
-        *self == Self::OPEN
+        let mut open = Self::OPEN;
+        open.hello = self.hello;
+        *self == open
     }
 
     pub fn backend(&self, resource_id: BackendResourceId) -> Option<&BackendDescriptor> {
@@ -382,20 +375,6 @@ impl Capabilities {
             group_policy_reads: native,
             evaluation: None,
         };
-        self
-    }
-
-    /// Returns a copy with platform-native sessions.
-    #[must_use]
-    pub fn with_sessions(mut self, value: bool) -> Self {
-        self.sessions = value;
-        self
-    }
-
-    /// Returns a copy with platform-side durable dedup.
-    #[must_use]
-    pub fn with_durable_dedup(mut self, value: bool) -> Self {
-        self.durable_dedup = value;
         self
     }
 
@@ -651,6 +630,21 @@ mod tests {
                 .map(|reason| reason.code),
             Some(BackendReadinessCode::ConfigurationPending)
         );
+    }
+
+    #[test]
+    fn given_open_capabilities_when_the_probe_outcome_changes_then_should_still_be_open_only() {
+        for hello in [
+            HelloOutcome::Unknown,
+            HelloOutcome::Answered,
+            HelloOutcome::Rejected,
+            HelloOutcome::Failed,
+        ] {
+            let mut caps = Capabilities::OPEN;
+            caps.hello = hello;
+            assert!(caps.is_open_only());
+            assert!(!caps.with_managed(true).is_open_only());
+        }
     }
 
     #[test]

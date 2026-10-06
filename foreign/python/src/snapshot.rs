@@ -1,92 +1,213 @@
-use crate::async_bridge::future_into_py;
+use crate::async_bridge::{HookLoop, call_hook, future_into_py};
 use crate::client::PyLaser;
+use crate::convert::{py_to_de, ser_to_py};
 use crate::errors::to_pyerr;
-use laser_sdk::laser::Laser;
 use laser_sdk::snapshot::{FoldSnapshot, KvSnapshotStore, SnapshotStore, TopicSnapshotStore};
 use laser_sdk::wire::agent::ConversationId;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
-use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
-// Which backend a `PySnapshotStore` builds per call. `SnapshotStore` is an RPITIT
-// trait (not object-safe), so the concrete store is rebuilt from the `Laser` (a
-// cheap Arc clone) and the name each call, rather than boxed.
 #[derive(Clone)]
 enum Kind {
-    Kv(String),
-    Topic(String),
+    Kv(Arc<KvSnapshotStore>),
+    Topic(Arc<TopicSnapshotStore>),
+    Custom(Arc<Py<PyAny>>, HookLoop),
 }
+
+/// A fold snapshot store. `KvSnapshotStore` and `TopicSnapshotStore` are the native stores. `SnapshotStore(backend)` wraps a custom backend whose `latest(conversation)` and `save(snapshot)` callbacks can return directly or through an awaitable.
+#[gen_stub_pyclass]
+#[pyclass(name = "SnapshotStore", subclass)]
+pub struct PySnapshotStore {
+    kind: Kind,
+}
+
+/// Fold snapshots in the managed key-value store, one key per conversation in a dedicated namespace (default `agent.snapshots`). Apache Iggy raises `UnsupportedError` on its verbs, so pick `TopicSnapshotStore` there.
+#[gen_stub_pyclass]
+#[pyclass(name = "KvSnapshotStore", extends = PySnapshotStore)]
+pub struct PyKvSnapshotStore;
 
 #[gen_stub_pymethods]
 #[pymethods]
-impl PyLaser {
-    /// A fold-snapshot store in the managed key-value store (one key per
-    /// conversation in `namespace`, default `agent.snapshots`), so a long
-    /// conversation resumes from its last checkpoint instead of replaying every
-    /// record. Managed: against Apache Iggy the calls raise `UnsupportedError`
-    /// - use `topic_snapshot_store` there.
-    #[pyo3(signature = (namespace=None))]
-    fn kv_snapshot_store(&self, namespace: Option<String>) -> PySnapshotStore {
-        PySnapshotStore {
-            laser: self.inner.clone(),
-            kind: Kind::Kv(
-                namespace
-                    .unwrap_or_else(|| laser_sdk::snapshot::DEFAULT_SNAPSHOT_NAMESPACE.to_owned()),
-            ),
+impl PyKvSnapshotStore {
+    /// A store over the default `agent.snapshots` namespace.
+    #[new]
+    fn new(laser: PyRef<'_, PyLaser>) -> PyClassInitializer<PyKvSnapshotStore> {
+        let store = KvSnapshotStore::new(laser.inner.clone());
+        PyClassInitializer::from(PySnapshotStore::native(Kind::Kv(Arc::new(store))))
+            .add_subclass(PyKvSnapshotStore)
+    }
+
+    /// A store over `namespace`, for keeping several folds' snapshots apart.
+    #[staticmethod]
+    fn in_namespace(
+        py: Python<'_>,
+        laser: PyRef<'_, PyLaser>,
+        namespace: String,
+    ) -> PyResult<Py<PyKvSnapshotStore>> {
+        let store = KvSnapshotStore::in_namespace(laser.inner.clone(), namespace);
+        Py::new(
+            py,
+            PyClassInitializer::from(PySnapshotStore::native(Kind::Kv(Arc::new(store))))
+                .add_subclass(PyKvSnapshotStore),
+        )
+    }
+}
+
+/// Fold snapshots as records on a dedicated topic (default `agent.snapshots`), partitioned by conversation. Works on Apache Iggy. `latest` scans backward from the tail, so keep the topic on retention.
+#[gen_stub_pyclass]
+#[pyclass(name = "TopicSnapshotStore", extends = PySnapshotStore)]
+pub struct PyTopicSnapshotStore;
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyTopicSnapshotStore {
+    /// A store over the default `agent.snapshots` topic.
+    #[new]
+    fn new(laser: PyRef<'_, PyLaser>) -> PyClassInitializer<PyTopicSnapshotStore> {
+        let store = TopicSnapshotStore::new(laser.inner.clone());
+        PyClassInitializer::from(PySnapshotStore::native(Kind::Topic(Arc::new(store))))
+            .add_subclass(PyTopicSnapshotStore)
+    }
+
+    /// A store over `topic`, for keeping several folds' snapshots apart.
+    #[staticmethod]
+    fn on_topic(
+        py: Python<'_>,
+        laser: PyRef<'_, PyLaser>,
+        topic: String,
+    ) -> PyResult<Py<PyTopicSnapshotStore>> {
+        let store = TopicSnapshotStore::on_topic(laser.inner.clone(), topic);
+        Py::new(
+            py,
+            PyClassInitializer::from(PySnapshotStore::native(Kind::Topic(Arc::new(store))))
+                .add_subclass(PyTopicSnapshotStore),
+        )
+    }
+}
+
+/// The offset a partition's resume reads from: one past the last offset
+/// `snapshot` folded, or `0` for a partition it did not cover.
+#[gen_stub_pyfunction]
+#[pyfunction]
+pub fn fold_snapshot_resume_offset(snapshot: &Bound<'_, PyAny>, partition: u32) -> PyResult<u64> {
+    Ok(snapshot_from_py(snapshot)?.resume_offset(partition))
+}
+
+#[derive(Clone)]
+pub(crate) struct SnapshotHandle {
+    kind: Kind,
+}
+
+impl SnapshotHandle {
+    pub(crate) fn from_py(store: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Ok(store) = store.extract::<PyRef<'_, PySnapshotStore>>() {
+            return Ok(store.handle());
+        }
+        Ok(PySnapshotStore::new(store)?.handle())
+    }
+
+    pub(crate) async fn latest(
+        &self,
+        conversation: ConversationId,
+    ) -> Result<Option<FoldSnapshot>, laser_sdk::LaserError> {
+        match &self.kind {
+            Kind::Kv(store) => store.latest(conversation).await,
+            Kind::Topic(store) => store.latest(conversation).await,
+            Kind::Custom(store, fallback) => {
+                let value = call_hook(fallback, |call| {
+                    call.call_method(store.bind(call.py()), "latest", (conversation.to_string(),))
+                })
+                .await
+                .map_err(crate::errors::from_callback_error)?;
+                Python::attach(|py| {
+                    if value.bind(py).is_none() {
+                        Ok(None)
+                    } else {
+                        snapshot_from_py(value.bind(py)).map(Some)
+                    }
+                })
+                .map_err(|error| {
+                    laser_sdk::LaserError::HandlerConfig(format!(
+                        "snapshot latest must return None or a snapshot dict: {error}"
+                    ))
+                })
+            }
         }
     }
 
-    /// A fold-snapshot store as records on a dedicated snapshots `topic` (default
-    /// `agent.snapshots`), partitioned by conversation. Log-native: works on raw
-    /// Apache Iggy. `latest` walks the topic backward to the newest checkpoint, so
-    /// keep the topic on retention.
-    #[pyo3(signature = (topic=None))]
-    fn topic_snapshot_store(&self, topic: Option<String>) -> PySnapshotStore {
-        PySnapshotStore {
-            laser: self.inner.clone(),
-            kind: Kind::Topic(
-                topic.unwrap_or_else(|| laser_sdk::snapshot::DEFAULT_SNAPSHOT_TOPIC.to_owned()),
-            ),
+    async fn save(&self, snapshot: &FoldSnapshot) -> Result<(), laser_sdk::LaserError> {
+        match &self.kind {
+            Kind::Kv(store) => store.save(snapshot).await,
+            Kind::Topic(store) => store.save(snapshot).await,
+            Kind::Custom(store, fallback) => {
+                call_hook(fallback, |call| {
+                    let snapshot = snapshot_to_py(call.py(), snapshot)?;
+                    call.call_method(store.bind(call.py()), "save", (snapshot,))
+                })
+                .await
+                .map_err(crate::errors::from_callback_error)?;
+                Ok(())
+            }
         }
     }
 }
 
-/// A fold-snapshot store: `save` a checkpoint, `latest` the newest for a
-/// conversation. Build with `Laser.kv_snapshot_store` / `topic_snapshot_store`.
-#[gen_stub_pyclass]
-#[pyclass(name = "SnapshotStore")]
-pub struct PySnapshotStore {
-    laser: Laser,
-    kind: Kind,
+impl PySnapshotStore {
+    fn native(kind: Kind) -> Self {
+        Self { kind }
+    }
+
+    pub(crate) fn handle(&self) -> SnapshotHandle {
+        SnapshotHandle {
+            kind: self.kind.clone(),
+        }
+    }
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PySnapshotStore {
-    /// The newest snapshot for `conversation` as a dict `{"conversation": str,
-    /// "as_of": {partition: offset}, "state": bytes}`, or `None` when it has never
-    /// been snapshotted.
+    #[new]
+    fn new(backend: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Ok(store) = backend.extract::<PyRef<'_, PySnapshotStore>>() {
+            return Ok(Self {
+                kind: store.kind.clone(),
+            });
+        }
+        for name in ["latest", "save"] {
+            let callback = backend.getattr(name).map_err(|error| {
+                if error.is_instance_of::<pyo3::exceptions::PyAttributeError>(backend.py()) {
+                    crate::errors::ConfigError::new_err(format!(
+                        "snapshot backend must define {name}"
+                    ))
+                } else {
+                    error
+                }
+            })?;
+            if !callback.is_callable() {
+                return Err(crate::errors::ConfigError::new_err(format!(
+                    "snapshot backend {name} must be callable"
+                )));
+            }
+        }
+        Ok(Self {
+            kind: Kind::Custom(
+                Arc::new(backend.clone().unbind()),
+                HookLoop::capture(backend.py()),
+            ),
+        })
+    }
+
+    /// The newest snapshot as `{"conversation": str, "as_of": {partition: offset}, "state": bytes}`, or `None`. The offsets are inclusive.
     fn latest<'py>(&self, py: Python<'py>, conversation: String) -> PyResult<Bound<'py, PyAny>> {
         let conversation = ConversationId::from_str(&conversation)
-            .map_err(|e| crate::errors::InvalidError::new_err(e.to_string()))?;
-        let laser = self.laser.clone();
-        let kind = self.kind.clone();
+            .map_err(|error| crate::errors::InvalidError::new_err(error.to_string()))?;
+        let store = self.handle();
         future_into_py(py, async move {
-            let snapshot = match kind {
-                Kind::Kv(namespace) => {
-                    KvSnapshotStore::in_namespace(laser, namespace)
-                        .latest(conversation)
-                        .await
-                }
-                Kind::Topic(topic) => {
-                    TopicSnapshotStore::on_topic(laser, topic)
-                        .latest(conversation)
-                        .await
-                }
-            }
-            .map_err(to_pyerr)?;
+            let snapshot = store.latest(conversation).await.map_err(to_pyerr)?;
             Python::attach(|py| match snapshot {
                 Some(snapshot) => Ok(Some(snapshot_to_py(py, &snapshot)?.unbind())),
                 None => Ok(None),
@@ -94,8 +215,7 @@ impl PySnapshotStore {
         })
     }
 
-    /// Persist a checkpoint for `conversation`: `as_of` is the per-partition last
-    /// folded offset (inclusive), `state` the opaque folded bytes (any codec).
+    /// Save opaque folded bytes for `conversation`. `as_of` maps each partition to the last folded offset, inclusive. Custom callbacks receive the complete snapshot dict.
     fn save<'py>(
         &self,
         py: Python<'py>,
@@ -104,41 +224,30 @@ impl PySnapshotStore {
         state: Vec<u8>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let conversation = ConversationId::from_str(&conversation)
-            .map_err(|e| crate::errors::InvalidError::new_err(e.to_string()))?;
-        let laser = self.laser.clone();
-        let kind = self.kind.clone();
+            .map_err(|error| crate::errors::InvalidError::new_err(error.to_string()))?;
+        let store = self.handle();
         future_into_py(py, async move {
-            let snapshot = FoldSnapshot {
-                conversation,
-                as_of,
-                state,
-            };
-            match kind {
-                Kind::Kv(namespace) => {
-                    KvSnapshotStore::in_namespace(laser, namespace)
-                        .save(&snapshot)
-                        .await
-                }
-                Kind::Topic(topic) => {
-                    TopicSnapshotStore::on_topic(laser, topic)
-                        .save(&snapshot)
-                        .await
-                }
-            }
-            .map_err(to_pyerr)
+            store
+                .save(&FoldSnapshot {
+                    conversation,
+                    as_of,
+                    state,
+                })
+                .await
+                .map_err(to_pyerr)
         })
     }
 }
 
-// A `FoldSnapshot` as a Python dict.
-fn snapshot_to_py<'py>(py: Python<'py>, snapshot: &FoldSnapshot) -> PyResult<Bound<'py, PyAny>> {
-    let dict = PyDict::new(py);
-    dict.set_item("conversation", snapshot.conversation.to_string())?;
-    let as_of = PyDict::new(py);
-    for (partition, offset) in &snapshot.as_of {
-        as_of.set_item(partition, offset)?;
-    }
-    dict.set_item("as_of", as_of)?;
-    dict.set_item("state", pyo3::types::PyBytes::new(py, &snapshot.state))?;
-    Ok(dict.into_any())
+// A fold snapshot crosses as its serde dict: `conversation` (str), `as_of`
+// (partition to last folded offset, inclusive), and `state` (bytes).
+pub(crate) fn snapshot_to_py<'py>(
+    py: Python<'py>,
+    snapshot: &FoldSnapshot,
+) -> PyResult<Bound<'py, PyAny>> {
+    Ok(ser_to_py(py, snapshot)?.into_bound(py))
+}
+
+pub(crate) fn snapshot_from_py(value: &Bound<'_, PyAny>) -> PyResult<FoldSnapshot> {
+    py_to_de(value)
 }

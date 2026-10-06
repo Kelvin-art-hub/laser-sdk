@@ -114,8 +114,9 @@ pub struct Agent<H> {
     pub ack_on_pickup: bool,
     /// Run `consolidator` every `consolidate_every` off the handler loop (its
     /// own task, stopped with the agent). Both must be set for the tick to
-    /// exist. Absent means no background consolidation, ever. The scope is the
-    /// consolidator's own concern (a `DefaultConsolidator` holds its memory).
+    /// exist. Absent means no background consolidation, ever. Each pass runs
+    /// over this agent's own memory: the scope carries the agent id and
+    /// nothing else.
     pub consolidate_every: Option<Duration>,
     /// The consolidation pass the periodic tick runs (see
     /// [`consolidate_every`](Self::consolidate_every)).
@@ -178,22 +179,11 @@ where
         let signing_key = self.signing_key;
         let (shutdown, shutdown_rx) = oneshot::channel();
         let (ready_tx, ready_rx) = oneshot::channel();
-        // The consolidation tick, off the handler loop: best-effort, logged,
-        // aborted with the agent. No background magic unless both knobs are set.
+        // No background magic unless both knobs are set.
         let consolidation = match (self.consolidate_every, self.consolidator) {
-            (Some(every), Some(consolidator)) => Some(tokio::spawn(async move {
-                let mut tick = tokio::time::interval(every);
-                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                loop {
-                    tick.tick().await;
-                    let scope = crate::memory::MemoryScope::default();
-                    if let Err(error) =
-                        crate::memory::Consolidator::consolidate(&consolidator, &scope).await
-                    {
-                        warn!(%error, "background consolidation pass failed");
-                    }
-                }
-            })),
+            (Some(every), Some(consolidator)) => {
+                Some(spawn_consolidation(&id, every, consolidator))
+            }
             _ => None,
         };
         let task = tokio::spawn(async move {
@@ -229,8 +219,8 @@ where
                 .await
         });
         AgentHandle {
-            shutdown,
-            task,
+            shutdown: Some(shutdown),
+            task: Some(task),
             ready: Some(ready_rx),
             consolidation,
         }
@@ -276,11 +266,11 @@ pub(crate) async fn advertise(
     Ok(())
 }
 
-/// Owns a spawned agent. Dropping it detaches the task and leaves it running, as
-/// before. Call `shutdown` (or `join`) to stop it and observe a consumer error.
+/// Owns a spawned agent. Dropping it signals a graceful stop and stops consolidation. Call `shutdown` or `join` to observe the consumer result.
+#[must_use = "keep the handle alive until the agent finishes or is shut down"]
 pub struct AgentHandle {
-    shutdown: oneshot::Sender<()>,
-    task: JoinHandle<Result<(), LaserError>>,
+    shutdown: Option<oneshot::Sender<()>>,
+    task: Option<JoinHandle<Result<(), LaserError>>>,
     ready: Option<oneshot::Receiver<()>>,
     // The background consolidation tick, aborted whenever the agent stops.
     consolidation: Option<JoinHandle<()>>,
@@ -299,17 +289,19 @@ impl AgentHandle {
     }
 
     /// Signal the agent to stop, wait for it, and surface any consumer error.
-    pub async fn shutdown(self) -> Result<(), LaserError> {
-        let _ = self.shutdown.send(());
+    pub async fn shutdown(mut self) -> Result<(), LaserError> {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
         if let Some(consolidation) = &self.consolidation {
             consolidation.abort();
         }
-        Self::join_task(self.task).await
+        Self::join_task(self.task.take().expect("agent task is retained")).await
     }
 
     /// Wait for the agent to finish (it runs until its consumer ends or errors).
-    pub async fn join(self) -> Result<(), LaserError> {
-        let result = Self::join_task(self.task).await;
+    pub async fn join(mut self) -> Result<(), LaserError> {
+        let result = Self::join_task(self.task.take().expect("agent task is retained")).await;
         if let Some(consolidation) = &self.consolidation {
             consolidation.abort();
         }
@@ -318,7 +310,9 @@ impl AgentHandle {
 
     /// Abort the agent's task immediately, without waiting.
     pub fn abort(&self) {
-        self.task.abort();
+        if let Some(task) = &self.task {
+            task.abort();
+        }
         if let Some(consolidation) = &self.consolidation {
             consolidation.abort();
         }
@@ -329,5 +323,125 @@ impl AgentHandle {
             Ok(result) => result,
             Err(join) => Err(LaserError::HandlerConfig(join.to_string())),
         }
+    }
+}
+
+impl Drop for AgentHandle {
+    fn drop(&mut self) {
+        if let Some(consolidation) = &self.consolidation {
+            consolidation.abort();
+        }
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+    }
+}
+
+// The consolidation tick, off the handler loop: best-effort, logged, aborted
+// with the agent. A pass covers the agent's own memory, never every
+// conversation in the namespace.
+fn spawn_consolidation(
+    agent: &AgentId,
+    every: Duration,
+    consolidator: crate::memory::SharedConsolidator,
+) -> JoinHandle<()> {
+    let scope = crate::memory::MemoryScope::builder()
+        .agent(agent.clone())
+        .build();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if let Err(error) =
+                crate::memory::Consolidator::consolidate(&consolidator, &scope).await
+            {
+                warn!(%error, "background consolidation pass failed");
+            }
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct SignalDrop(Option<oneshot::Sender<()>>);
+
+    impl Drop for SignalDrop {
+        fn drop(&mut self) {
+            if let Some(signal) = self.0.take() {
+                let _ = signal.send(());
+            }
+        }
+    }
+
+    struct RecordingConsolidator(tokio::sync::mpsc::UnboundedSender<crate::memory::MemoryScope>);
+
+    impl crate::memory::Consolidator for RecordingConsolidator {
+        async fn consolidate(
+            &self,
+            scope: &crate::memory::MemoryScope,
+        ) -> Result<crate::memory::ConsolidationReport, LaserError> {
+            let _ = self.0.send(scope.clone());
+            Ok(crate::memory::ConsolidationReport::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn given_an_agent_consolidation_tick_when_it_fires_then_should_scope_the_pass_to_the_agent()
+     {
+        let (passes, mut scopes) = tokio::sync::mpsc::unbounded_channel();
+        let agent: AgentId = "planner".parse().expect("valid agent id");
+        let tick = spawn_consolidation(
+            &agent,
+            Duration::from_millis(5),
+            crate::memory::SharedConsolidator::new(RecordingConsolidator(passes)),
+        );
+        let scope = tokio::time::timeout(Duration::from_secs(2), scopes.recv())
+            .await
+            .expect("a pass ran")
+            .expect("the tick is alive");
+        tick.abort();
+        assert_eq!(scope.agent, Some(agent));
+        assert!(scope.conversation.is_none());
+        assert!(scope.user.is_none());
+        assert!(scope.app.is_none());
+        assert!(scope.stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn given_a_running_agent_when_its_handle_is_dropped_then_should_stop_the_worker_and_consolidation()
+     {
+        let (shutdown, stop) = oneshot::channel();
+        let (worker_done, worker_stopped) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _ = stop.await;
+            let _ = worker_done.send(());
+            Ok(())
+        });
+        let (started, running) = oneshot::channel();
+        let (consolidation_done, consolidation_stopped) = oneshot::channel();
+        let consolidation = tokio::spawn(async move {
+            let _finished = SignalDrop(Some(consolidation_done));
+            let _ = started.send(());
+            std::future::pending::<()>().await;
+        });
+        let handle = AgentHandle {
+            shutdown: Some(shutdown),
+            task: Some(task),
+            ready: None,
+            consolidation: Some(consolidation),
+        };
+        running.await.expect("consolidation started");
+        drop(handle);
+        tokio::time::timeout(Duration::from_secs(2), worker_stopped)
+            .await
+            .expect("worker stopped")
+            .expect("worker reported its stop");
+        tokio::time::timeout(Duration::from_secs(2), consolidation_stopped)
+            .await
+            .expect("consolidation stopped")
+            .expect("consolidation reported its stop");
     }
 }

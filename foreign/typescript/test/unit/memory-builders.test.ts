@@ -61,11 +61,11 @@ void test("given_every_remember_option_when_sent_then_should_hand_the_backend_on
   const agent = AgentId.new("triage")
 
   await memory
-    .remember(new TextEncoder().encode("prefers aisle seats"))
-    .conversation(conversation)
+    .remember(new TextEncoder().encode("sits in the eu-west pool"))
+    .scope(conversation)
     .user("u-42")
     .agent(agent)
-    .application("bookings")
+    .application("fleet-ops")
     .stream("support")
     .durable()
     .kind(MemoryKind.Procedure)
@@ -78,7 +78,7 @@ void test("given_every_remember_option_when_sent_then_should_hand_the_backend_on
   assert.equal(written.scope.conversation, conversation)
   assert.equal(written.scope.user, "u-42")
   assert.equal(written.scope.agent, agent)
-  assert.equal(written.scope.application, "bookings")
+  assert.equal(written.scope.app, "fleet-ops")
   assert.equal(written.scope.stream, "support")
   assert.ok(written.scope.lifetime, "durable() sets the lifetime")
 })
@@ -89,15 +89,13 @@ void test("given_every_recall_option_when_fetched_then_should_hand_the_backend_o
   const conversation = ConversationId.new()
 
   await memory
-    .recall()
-    .conversation(conversation)
+    .recall(conversation)
     .user("u-42")
     .agent(AgentId.new("triage"))
-    .application("bookings")
+    .application("fleet-ops")
     .stream("support")
     .hybrid("seating preference")
     .limit(5)
-    .tokenBudget(2_000)
     .fetch()
 
   const [read] = backend.recalled
@@ -106,7 +104,7 @@ void test("given_every_recall_option_when_fetched_then_should_hand_the_backend_o
   assert.equal(read.query.semantic, "seating preference")
   assert.equal(read.query.strategy, RecallStrategy.Hybrid)
   assert.equal(read.query.limit, 5)
-  assert.equal(read.query.tokenBudget, 2_000)
+  assert.equal(read.scope.stream, "support")
 })
 
 void test("given_each_recall_strategy_when_selected_then_should_set_that_ranking", async () => {
@@ -114,8 +112,8 @@ void test("given_each_recall_strategy_when_selected_then_should_set_that_ranking
   const memory = MemoryHandle.custom(backend)
 
   await memory.recall().recent().fetch()
-  await memory.recall().semantic("why is checkout slow").fetch()
-  await memory.recall().keyword("checkout").fetch()
+  await memory.recall().semantic("why is auth slow").fetch()
+  await memory.recall().keyword("auth").fetch()
   await memory.recall().strategy(RecallStrategy.Auto).fetch()
 
   assert.deepEqual(
@@ -126,14 +124,25 @@ void test("given_each_recall_strategy_when_selected_then_should_set_that_ranking
 
 void test("given_recalled_items_when_rendered_as_a_block_then_should_join_them_under_the_budget", async () => {
   const backend = new RecordingMemory()
-  backend.items = [item("prefers aisle seats"), item("travels monthly")]
+  backend.items = [item("sits in the eu-west pool"), item("rotates keys monthly")]
   const memory = MemoryHandle.custom(backend)
 
   const block = await memory.recall().limit(2).block()
-  assert.match(block, /prefers aisle seats/u)
+  assert.match(block, /sits in the eu-west pool/u)
 
   const budgeted = await memory.context({}, { tokenBudget: 4 })
   assert.ok(budgeted.length > 0, "a budget of four tokens still keeps one item")
+})
+
+void test("given_a_token_budget_when_a_recall_is_rendered_as_a_block_then_should_bound_the_block_by_it", async () => {
+  const backend = new RecordingMemory()
+  backend.items = [item("sits in the eu-west pool"), item("rotates keys monthly")]
+  const memory = MemoryHandle.custom(backend)
+
+  const bounded = await memory.recall().block(1)
+  assert.equal(bounded, "sits in the eu-west pool\n\n[... 1 more recalled item(s) omitted ...]")
+  const unbounded = await memory.recall().block()
+  assert.equal(unbounded, "sits in the eu-west pool\n\nrotates keys monthly")
 })
 
 void test("given_feedback_and_a_tombstone_when_applied_then_should_reach_the_backend_verbatim", async () => {
@@ -160,8 +169,23 @@ void test("given_a_stale_scope_when_consolidated_then_should_forget_everything_p
 
   const report = await memory.consolidate({}, 1)
 
-  assert.deepEqual(report, { scanned: 3, kept: 1, forgotten: 2 })
+  assert.deepEqual(report, { summarized: 0, reweighted: 0, pruned: 2, derived: 0 })
   assert.equal(backend.forgotten.length, 2)
+})
+
+void test("given_items_in_backend_order_when_consolidated_then_should_prune_by_id_age", async () => {
+  const backend = new RecordingMemory()
+  const oldest = { ...item("oldest"), id: MemoryId.fromU128(1n) }
+  const middle = { ...item("middle"), id: MemoryId.fromU128(2n) }
+  const newest = { ...item("newest"), id: MemoryId.fromU128(3n) }
+  backend.items = [oldest, newest, middle]
+  const report = await MemoryHandle.custom(backend).consolidate({}, 1)
+  assert.deepEqual(
+    backend.forgotten.map(({ id }) => id.asU128()),
+    [1n, 2n]
+  )
+  assert.deepEqual(report, { summarized: 0, reweighted: 0, pruned: 2, derived: 0 })
+  assert.deepEqual(backend.items, [oldest, newest, middle])
 })
 
 void test("given_a_reranker_when_attached_then_should_reorder_semantic_recall_only", async () => {

@@ -1,15 +1,23 @@
+import { code } from "../client/error-classify.js"
 import {
+  CancelledError,
   CodecError,
+  ConsumerGroupSetupError,
   FilterExecutionError,
+  FilterFaultError,
+  FilterOversizedRecordError,
   HandlerError,
   InvalidError,
   LaserError,
   NoStreamError,
-  TransportError
+  TimeoutError,
+  TransportError,
+  publishCause
 } from "../client/errors.js"
 import { INTERNAL_NATIVE_CONSUMER, INTERNAL_TRANSPORT } from "../client/internals.js"
 import type { Laser } from "../client/laser.js"
-import type { IggyHeaderValue, LaserTransport } from "../iggy/apache-iggy.js"
+import type { LaserTransport } from "../iggy/apache-iggy.js"
+import type { HeaderValue } from "../stream/header-value.js"
 import { AgentTopic } from "../provenance/agent-topic.js"
 import { decodeProvenanceHeaders, type Provenance } from "../provenance/provenance.js"
 import { SystemClock, type Clock } from "../runtime/clock.js"
@@ -30,12 +38,13 @@ import {
   type SignatureContext
 } from "../wire/agent.js"
 import { AGENT_OP_VERSION } from "../wire/codes.js"
+import { resultCodeIsRetryable } from "../wire/result.js"
 import { decodeOne, encodeNamed, expectMap } from "../wire/cbor.js"
 import { type ContentType, contentTypeFromCode } from "../wire/content.js"
 import { AGENT_VERSION, CONTENT_TYPE, FENCE } from "../wire/headers.js"
 import type { LogPosition } from "../wire/ids.js"
-import type { Consumer } from "../stream/consumer.js"
-import { AgentContext } from "./context.js"
+import type { Consumer, ConsumerMessage } from "../stream/consumer.js"
+import { AgentCtx } from "./context.js"
 import { ADVERTISED_INBOX_ROUTE, type InboxRoute } from "./router.js"
 
 const DEDUP_SCOPE_SEP = "\u001f"
@@ -46,6 +55,9 @@ const FENCE_MAP_SOFT_CAP = 16_384
 const FENCE_ENTRY_TTL_MICROS = 600_000_000n
 
 const FENCE_SWEEP_INTERVAL_MICROS = 1_000_000n
+// How many verified record ids a consumer remembers to refuse a replay of the
+// exact signed bytes, sized like the fence map.
+const VERIFIED_RECORD_WINDOW = 16_384
 
 function tryAgentId(value: string): AgentId | undefined {
   try {
@@ -59,7 +71,7 @@ function fenceFromMetadata(
   metadata: ReadonlyMap<string, { readonly kind: string; readonly value?: unknown }> | undefined
 ): bigint | undefined {
   const entry = metadata?.get(FENCE)
-  if (entry?.kind !== "int") return undefined
+  if (entry?.kind !== "int" && entry?.kind !== "uint") return undefined
   const value = entry.value
   return typeof value === "bigint" && value >= 0n ? value : undefined
 }
@@ -86,7 +98,7 @@ export interface ReceivedAgentMessage {
   readonly partitionId: number
   readonly offset: bigint
   readonly timestampMicros?: bigint
-  readonly headers: ReadonlyMap<string, IggyHeaderValue>
+  readonly headers: ReadonlyMap<string, HeaderValue>
 }
 
 export interface ProvenanceAndEnvelope {
@@ -243,7 +255,7 @@ export class SlidingWindow implements Deduplicator {
 export function dedupKey(provenance: Provenance): string | undefined {
   if (provenance.idempotencyKey === undefined) return undefined
   return provenance.agent !== undefined
-    ? `${provenance.agent.asString()}${DEDUP_SCOPE_SEP}${provenance.idempotencyKey}`
+    ? `${provenance.agent.asStr()}${DEDUP_SCOPE_SEP}${provenance.idempotencyKey}`
     : provenance.idempotencyKey
 }
 
@@ -281,7 +293,7 @@ export function acceptFence(
 }
 
 export interface AgentHandler {
-  handle(message: AgentMessage, context: AgentContext): Promise<void>
+  handle(message: AgentMessage, context: AgentCtx): Promise<void>
 }
 
 export type HandlerResult =
@@ -289,7 +301,11 @@ export type HandlerResult =
 
 export interface AgentMiddleware {
   beforeHandle?(message: AgentMessage): Promise<void>
-  afterHandle?(message: AgentMessage, result: HandlerResult, attempt: number): Promise<void>
+  afterHandle?(
+    message: AgentMessage,
+    result: { readonly kind: "ok" } | { readonly kind: "error"; readonly error: LaserError },
+    attempt: number
+  ): Promise<void>
 }
 
 export interface DeadLetterSink {
@@ -307,6 +323,8 @@ export interface ReliableConsumerOptions {
   readonly dedupWindow?: number
   readonly retry?: RetryPolicy
   readonly pollIntervalMs?: number
+  /** Bounds active work after shutdown is requested. Defaults to 30 seconds. */
+  readonly shutdownGraceMs?: number
   readonly concurrency?: ConcurrencyPolicy
   readonly maxQueuedRecords?: number
   readonly maxQueuedBytes?: number
@@ -317,7 +335,9 @@ export interface ReliableConsumerOptions {
   readonly deduplicator?: Deduplicator
   readonly warmDedup?: boolean
   readonly middleware?: readonly AgentMiddleware[]
-  readonly deadLetterSink?: DeadLetterSink
+  readonly onDeadLetter?: DeadLetterSink
+  /** Deadline and fence checks read this clock, the system clock by default.
+   * @internal */
   readonly clock?: Clock
   readonly verifier?: KeyRegistry
   readonly signingKey?: SigningKey
@@ -336,13 +356,23 @@ function handlerError(error: unknown): LaserError {
     : new HandlerError(error instanceof Error ? error.message : String(error), { cause: error })
 }
 
+/** Whether retrying the same call can succeed, the classifier the Rust
+ * `LaserError::is_retryable` defines. A failed publish answers for its cause.
+ * Managed failures follow the canonical result-code classifier, while
+ * transport, handler, routing, timeout, and deferred-policy failures keep
+ * their local semantics. */
 export function isRetryable(error: LaserError): boolean {
-  switch (error.kind) {
+  const cause = publishCause(error)
+  if (!(cause instanceof LaserError)) return false
+  switch (cause.kind) {
     case "config":
     case "no-stream":
+    case "no-respond-topic":
     case "ambiguous-mutation":
     case "unsupported":
     case "invalid":
+    case "id":
+    case "provenance":
     case "codec":
     case "protocol":
     case "handler-config":
@@ -357,13 +387,17 @@ export function isRetryable(error: LaserError): boolean {
     case "authz":
     case "signature":
     case "budget-exceeded":
+    case "fence-violation":
+    case "quarantined":
+      return false
+    case "publish-failed":
       return false
     case "transport":
-      return error instanceof TransportError ? error.retryable : true
+      return cause instanceof TransportError ? cause.retryable : true
     case "routing":
       return !(
-        "reason" in error &&
-        (error as { readonly reason?: { readonly kind?: string } }).reason?.kind ===
+        "reason" in cause &&
+        (cause as { readonly reason?: { readonly kind?: string } }).reason?.kind ===
           "principalMismatch"
       )
     case "query":
@@ -371,18 +405,16 @@ export function isRetryable(error: LaserError): boolean {
     case "fork":
     case "graph":
     case "agent-workflow":
-      return (
-        "detail" in error &&
-        ["notLeader", "stale", "unavailable"].includes(
-          String((error as { readonly detail?: { readonly kind?: unknown } }).detail?.kind)
-        )
-      )
+    case "checkpoint":
+      return resultCodeIsRetryable(code(cause))
     case "filter":
-      return (
-        error instanceof FilterExecutionError &&
-        error.detail.code.kind === "known" &&
-        ["Unavailable", "NotLeader", "Stale"].includes(error.detail.code.name)
-      )
+      if (cause instanceof ConsumerGroupSetupError) {
+        return cause.cause instanceof LaserError && isRetryable(cause.cause)
+      }
+      if (cause instanceof FilterFaultError || cause instanceof FilterOversizedRecordError) {
+        return false
+      }
+      return cause instanceof FilterExecutionError && resultCodeIsRetryable(cause.detail.code)
     case "timeout":
     case "handler":
     case "policy-deferred":
@@ -390,8 +422,53 @@ export function isRetryable(error: LaserError): boolean {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+// The next record, or undefined when none arrived within `waitMs`.
+async function nextOrIdle(
+  consumer: Consumer,
+  waitMs: number,
+  signal?: AbortSignal
+): Promise<ConsumerMessage | undefined> {
+  try {
+    return await consumer.nextWithin(waitMs, signal === undefined ? {} : { signal })
+  } catch (error) {
+    if (
+      error instanceof TimeoutError ||
+      (error instanceof CancelledError && signal?.aborted === true)
+    )
+      return undefined
+    throw error
+  }
+}
+
+// The worker reads the record's log offset, which a delivery carries in its position.
+function received(message: ConsumerMessage): ReceivedAgentMessage {
+  return {
+    payload: message.payload,
+    partitionId: message.partitionId,
+    offset: message.position.offset,
+    timestampMicros: message.timestampMicros,
+    headers: message.headers
+  }
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted === true) return Promise.resolve()
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout>
+    const deadline = Date.now() + ms
+    const finish = (): void => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", finish)
+      resolve()
+    }
+    const tick = (): void => {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) finish()
+      else timer = setTimeout(tick, Math.min(remaining, 2_147_483_647))
+    }
+    signal?.addEventListener("abort", finish, { once: true })
+    timer = setTimeout(tick, Math.min(Math.max(0, ms), 2_147_483_647))
+  })
 }
 
 async function consumeUntilDone(
@@ -402,7 +479,10 @@ async function consumeUntilDone(
     await work
     return true
   }
-  if (hardSignal.aborted) return false
+  if (hardSignal.aborted) {
+    void work.catch(() => undefined)
+    return false
+  }
   let removeAbort = (): void => undefined
   const aborted = new Promise<false>((resolve) => {
     const onAbort = (): void => {
@@ -414,14 +494,60 @@ async function consumeUntilDone(
     }
   })
   const completed = work.then(() => true)
-  const result = await Promise.race([completed, aborted])
-  removeAbort()
-  return result
+  try {
+    return await Promise.race([completed, aborted])
+  } finally {
+    removeAbort()
+  }
+}
+
+function shutdownControl(control: ReliableConsumerControl, graceMs: number) {
+  const forced = new AbortController()
+  const hardSignal =
+    control.hardSignal === undefined
+      ? forced.signal
+      : AbortSignal.any([forced.signal, control.hardSignal])
+  const signal =
+    control.signal === undefined ? hardSignal : AbortSignal.any([control.signal, hardSignal])
+  let expired = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const onShutdown = (): void => {
+    const deadline = Date.now() + graceMs
+    const tick = (): void => {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0) {
+        expired = true
+        forced.abort("agent shutdown drain")
+      } else {
+        timer = setTimeout(tick, Math.min(remaining, 2_147_483_647))
+      }
+    }
+    timer = setTimeout(tick, Math.min(graceMs, 2_147_483_647))
+  }
+  control.signal?.addEventListener("abort", onShutdown, { once: true })
+  if (control.signal?.aborted === true) onShutdown()
+  return {
+    runtime: {
+      ...control,
+      signal,
+      hardSignal,
+      hardAborted: () => hardSignal.aborted || control.hardAborted?.() === true
+    },
+    expired: () => expired,
+    stopped: () => signal.aborted,
+    dispose: (): void => {
+      clearTimeout(timer)
+      control.signal?.removeEventListener("abort", onShutdown)
+    }
+  }
 }
 
 class ReliableWorker {
   private readonly highWaterFence = new Map<string, FenceEntry>()
   private readonly fenceSweep: FenceSweepState = { lastSweepMicros: 0n }
+  // A signature binds the envelope to no log position, so the exact signed
+  // bytes verify again wherever a writer replays them.
+  private readonly verifiedRecords = new SlidingWindow(VERIFIED_RECORD_WINDOW)
 
   constructor(
     private readonly laser: Laser,
@@ -440,13 +566,18 @@ class ReliableWorker {
     > &
       Pick<
         ReliableConsumerOptions,
-        "agent" | "deadLetterSink" | "respondOn" | "signingKey" | "verifier"
-      >,
+        "agent" | "onDeadLetter" | "respondOn" | "signingKey" | "verifier"
+      > & { readonly hardSignal: AbortSignal },
     private readonly streamId: number,
     private readonly topicId: number
   ) {}
 
+  private cancelled(): boolean {
+    return this.options.hardSignal.aborted
+  }
+
   async consume(received: ReceivedAgentMessage): Promise<void> {
+    if (this.cancelled()) return
     const decoded = decodeAgentMessage(received, this.options.understoodFeatures)
     if (decoded.kind === "error") {
       await this.deadLetterUndecodable(received, decoded.payload)
@@ -480,6 +611,8 @@ class ReliableWorker {
         await this.deadLetter(message, "Rejected", 0, "signature verification failed")
         return
       }
+      const record = message.envelope?.record
+      if (record !== undefined && !(await this.verifiedRecords.observe(record.toString()))) return
     }
     const fence = message.provenance.fenceToken
     if (
@@ -503,14 +636,16 @@ class ReliableWorker {
       await this.deadLetter(message, "DeadlineExceeded", 0, "message past its deadline")
       return
     }
+    if (this.cancelled()) return
     await this.ackOnPickup(message)
-    const context = new AgentContext(this.laser, message, {
+    const context = AgentCtx.create(this.laser, message, {
       ...(this.options.agent !== undefined ? { agent: this.options.agent } : {}),
       ...(this.options.respondOn !== undefined ? { respondOn: this.options.respondOn } : {}),
       ...(this.options.signingKey !== undefined ? { signingKey: this.options.signingKey } : {}),
       inboxRoute: this.options.inboxRoute
     })
     for (const middleware of this.options.middleware) {
+      if (this.cancelled()) return
       try {
         await middleware.beforeHandle?.(message)
       } catch (error) {
@@ -520,6 +655,7 @@ class ReliableWorker {
       }
     }
     for (let attempt = 0; ; attempt += 1) {
+      if (this.cancelled()) return
       let result: HandlerResult
       try {
         await this.handler.handle(message, context)
@@ -527,7 +663,9 @@ class ReliableWorker {
       } catch (error) {
         result = { kind: "error", error: handlerError(error) }
       }
+      if (this.cancelled()) return
       for (const middleware of this.options.middleware) {
+        if (this.cancelled()) return
         try {
           await middleware.afterHandle?.(message, result, attempt + 1)
         } catch {
@@ -543,7 +681,7 @@ class ReliableWorker {
         await this.deadLetter(message, "RetryExhausted", attempt + 1, result.error.message)
         return
       }
-      await sleep(retryDelayMs(this.options.retry, attempt))
+      await sleep(retryDelayMs(this.options.retry, attempt), this.options.hardSignal)
     }
   }
 
@@ -639,7 +777,7 @@ class ReliableWorker {
       publishError = handlerError(error)
     }
     try {
-      await this.options.deadLetterSink?.onDeadLetter(message, capsule, publishError)
+      await this.options.onDeadLetter?.onDeadLetter(message, capsule, publishError)
     } catch {
       // Dead-letter sinks observe the terminal delivery decision.
     }
@@ -648,7 +786,7 @@ class ReliableWorker {
 }
 
 export class ReliableConsumer {
-  readonly options: ReliableConsumerOptions
+  private readonly options: ReliableConsumerOptions
 
   constructor(options: ReliableConsumerOptions) {
     if (
@@ -665,6 +803,9 @@ export class ReliableConsumer {
         throw new InvalidError(`${name} must be a positive safe integer`)
       }
     }
+    const grace = options.shutdownGraceMs ?? 30_000
+    if (!Number.isFinite(grace) || grace < 0)
+      throw new InvalidError("shutdownGraceMs must be a non-negative finite number")
     this.options = options
   }
 
@@ -679,14 +820,19 @@ export class ReliableConsumer {
     const deduplicator =
       this.options.deduplicator ?? new SlidingWindow(this.options.dedupWindow ?? 10_000)
     // The runtime owns its delivery contract over the native group consumer.
-    const group = laser.topic(this.options.topic).consumerGroup(this.options.group.asString())
+    const group = laser.topic(this.options.topic).consumerGroup(this.options.group.asStr())
     const openConsumer = (): Promise<Consumer> =>
-      group[INTERNAL_NATIVE_CONSUMER]({ autoCommit: false, pollIntervalMs })
+      group[INTERNAL_NATIVE_CONSUMER](
+        { commitPolicy: { kind: "disabled" }, pollIntervalMs },
+        "propagate"
+      )
     let consumer = await openConsumer()
     if (this.options.warmDedup === true) {
       await this.warmDedup(laser, deduplicator, this.options.dedupWindow ?? 10_000)
     }
     const ids = await laserTransportIds(laser, stream, this.options.topic)
+    const shutdown = shutdownControl(control, this.options.shutdownGraceMs ?? 30_000)
+    const runtime = shutdown.runtime
     const worker = new ReliableWorker(
       laser,
       handler,
@@ -694,14 +840,15 @@ export class ReliableConsumer {
         retry: this.options.retry ?? DEFAULT_RETRY_POLICY,
         understoodFeatures: this.options.understoodFeatures ?? 0n,
         clock: this.options.clock ?? new SystemClock(),
+        hardSignal: runtime.hardSignal,
         inboxRoute: this.options.inboxRoute ?? ADVERTISED_INBOX_ROUTE,
         middleware: this.options.middleware ?? [],
         ackOnPickup: this.options.ackOnPickup ?? false,
         deduplicator,
         ...(this.options.agent !== undefined ? { agent: this.options.agent } : {}),
         ...(this.options.respondOn !== undefined ? { respondOn: this.options.respondOn } : {}),
-        ...(this.options.deadLetterSink !== undefined
-          ? { deadLetterSink: this.options.deadLetterSink }
+        ...(this.options.onDeadLetter !== undefined
+          ? { onDeadLetter: this.options.onDeadLetter }
           : {}),
         ...(this.options.verifier !== undefined ? { verifier: this.options.verifier } : {}),
         ...(this.options.signingKey !== undefined ? { signingKey: this.options.signingKey } : {})
@@ -709,48 +856,48 @@ export class ReliableConsumer {
       ids.streamId,
       ids.topicId
     )
-    control.ready?.()
     try {
+      control.ready?.()
       for (;;) {
         try {
-          if ((this.options.concurrency ?? SERIAL_CONCURRENCY).kind === "serial") {
-            await this.runSerial(consumer, worker, control, pollIntervalMs)
-          } else {
-            const concurrency = this.options.concurrency
-            await this.runPerPartition(
-              consumer,
-              worker,
-              concurrency?.kind === "serial-per-partition" ? concurrency.maxPartitions : 1,
-              this.options.maxQueuedRecords ?? 4_096,
-              this.options.maxQueuedBytes ?? 64 * 1024 * 1024,
-              control,
-              pollIntervalMs
-            )
-          }
+          const concurrency = this.options.concurrency ?? SERIAL_CONCURRENCY
+          const running =
+            concurrency.kind === "serial"
+              ? this.runSerial(consumer, worker, runtime, pollIntervalMs)
+              : this.runPerPartition(
+                  consumer,
+                  worker,
+                  concurrency.maxPartitions,
+                  this.options.maxQueuedRecords ?? 4_096,
+                  this.options.maxQueuedBytes ?? 64 * 1024 * 1024,
+                  runtime,
+                  pollIntervalMs
+                )
+          await consumeUntilDone(running, runtime.hardSignal)
+          if (shutdown.expired()) throw new TimeoutError("agent shutdown drain")
           return
         } catch (error) {
           const failure = handlerError(error)
-          if (
-            control.signal?.aborted === true ||
-            control.hardAborted?.() === true ||
-            !isRetryable(failure)
-          ) {
+          if (runtime.signal.aborted || runtime.hardAborted() || !isRetryable(failure))
             throw failure
-          }
           try {
             await consumer.shutdown()
           } catch {
-            // Reconnection continues even when the failed consumer cannot leave cleanly.
+            // Reconnection continues when the failed consumer cannot leave cleanly.
           }
-          await sleep(pollIntervalMs)
+          await sleep(pollIntervalMs, runtime.signal)
+          if (shutdown.stopped()) return
           consumer = await openConsumer()
         }
       }
     } finally {
-      try {
-        await consumer.shutdown()
-      } catch {
-        // Preserve the primary consumer failure.
+      shutdown.dispose()
+      if (!runtime.hardAborted()) {
+        try {
+          await consumer.shutdown()
+        } catch {
+          // Preserve the primary consumer failure.
+        }
       }
     }
   }
@@ -762,9 +909,9 @@ export class ReliableConsumer {
     pollIntervalMs: number
   ): Promise<void> {
     while (control.signal?.aborted !== true) {
-      const message = await consumer.nextWithin(pollIntervalMs)
-      if (message === null) continue
-      if (!(await consumeUntilDone(worker.consume(message), control.hardSignal))) return
+      const message = await nextOrIdle(consumer, pollIntervalMs, control.signal)
+      if (message === undefined) continue
+      if (!(await consumeUntilDone(worker.consume(received(message)), control.hardSignal))) return
       if (control.hardAborted?.() !== true) await consumer.commit(message)
     }
   }
@@ -786,9 +933,9 @@ export class ReliableConsumer {
     let failure: LaserError | undefined
     const currentFailure = (): LaserError | undefined => failure
     while (control.signal?.aborted !== true && failure === undefined) {
-      const message = await consumer.nextWithin(pollIntervalMs)
-      if (message === null) continue
-      const position = `${String(message.partitionId)}:${message.offset.toString()}`
+      const message = await nextOrIdle(consumer, pollIntervalMs, control.signal)
+      if (message === undefined) continue
+      const position = `${String(message.partitionId)}:${message.position.offset.toString()}`
       if (scheduled.has(position)) continue
       const messageBytes = message.payload.byteLength + headerBytes(message.headers)
       while (
@@ -809,8 +956,8 @@ export class ReliableConsumer {
       queuedBytes += messageBytes
       const lane = (existing ?? Promise.resolve())
         .then(async () => {
-          if (currentFailure() !== undefined) return
-          await worker.consume(message)
+          if (currentFailure() !== undefined || control.hardAborted?.() === true) return
+          await worker.consume(received(message))
           if (control.hardAborted?.() !== true) await consumer.commit(message)
         })
         .catch((error: unknown) => {
@@ -840,7 +987,7 @@ export class ReliableConsumer {
       const offset = await transport.getConsumerOffset(
         stream,
         this.options.topic,
-        { kind: "group", name: this.options.group.asString() },
+        { kind: "group", name: this.options.group.asStr() },
         partitionId
       )
       if (offset === undefined) continue
@@ -865,7 +1012,7 @@ export class ReliableConsumer {
   }
 }
 
-function headerBytes(headers: ReadonlyMap<string, IggyHeaderValue>): number {
+function headerBytes(headers: ReadonlyMap<string, HeaderValue>): number {
   let size = 0
   for (const [key, value] of headers) {
     size += TEXT_ENCODER.encode(key).byteLength
